@@ -63,8 +63,12 @@ jobs:
       - run: pnpm install
       - name: typecheck
         run: pnpm exec turbo typecheck --filter=@multica/core --filter=@multica/views --filter=@multica/web
-      - name: locale parity + teams tests
-        run: pnpm --filter @multica/views exec vitest run locales teams
+      - name: lint teams files
+        run: pnpm --filter @multica/views exec eslint settings/components/teams-tab.tsx settings/components/teams-mark.tsx teams agents/components/tabs/integrations-tab.tsx settings/components/channels-tab.tsx
+      - name: locale parity + affected tests
+        run: pnpm --filter @multica/views exec vitest run locales teams channels-tab integrations-tab use-settings-search
+      - name: core tests
+        run: pnpm --filter @multica/core exec vitest run api realtime
 
   images:
     needs: [backend, frontend]
