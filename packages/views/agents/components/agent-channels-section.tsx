@@ -6,7 +6,7 @@ import type { Agent } from "@multica/core/types";
 import { dingtalkAgentGroupsOptions } from "@multica/core/dingtalk";
 import { Button } from "@multica/ui/components/ui/button";
 import { IconButton } from "@multica/ui/components/common/icon-button";
-import { ExternalLink, MoreHorizontal, Plus } from "@multica/ui/icons";
+import { Download, ExternalLink, MoreHorizontal, Plus } from "@multica/ui/icons";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +27,7 @@ import {
   DingTalkBotGroups,
   getDingTalkBotIdentity,
 } from "../../settings/components/dingtalk-bot-groups";
+import { downloadTeamsAppPackage } from "../../settings/components/teams-channel-authorization";
 import { CHANNEL_INTEGRATIONS } from "../../settings/components/settings-navigation";
 import {
   channelChatLink,
@@ -66,7 +67,7 @@ function AgentChannelContact({
     enabled: channel === "dingtalk",
   });
   const name =
-    connection.channel === "wecom"
+    connection.channel === "wecom" || connection.channel === "teams"
       ? connection.installation.bot_name
       : (data?.bot_identities?.[installation.id]?.bot_name ??
         getDingTalkBotIdentity(data?.groups ?? [], installation.id)?.bot_name);
@@ -214,7 +215,7 @@ function AgentChannelRow({
   const name =
     channel === "dingtalk"
       ? identity?.bot_name
-      : connection.channel === "wecom"
+      : connection.channel === "wecom" || connection.channel === "teams"
         ? connection.installation.bot_name
         : connection.channel === "telegram" &&
             connection.installation.bot_username
@@ -319,6 +320,22 @@ function AgentChannelRow({
                   >
                     <ExternalLink />
                     {t(($) => $.lark.agent_bot_silent_hint_link)}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              ) : null}
+              {connection.channel === "teams" ? (
+                <>
+                  <DropdownMenuItem
+                    onClick={() =>
+                      void downloadTeamsAppPackage(
+                        connection.installation,
+                        t(($) => $.teams.download_failed_toast),
+                      )
+                    }
+                  >
+                    <Download />
+                    {t(($) => $.teams.download_app)}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                 </>

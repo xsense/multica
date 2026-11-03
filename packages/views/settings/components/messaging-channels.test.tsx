@@ -61,16 +61,19 @@ vi.mock("@multica/core/api", async (original) => ({
       "beginWeixinLogin",
       "pollWeixinLogin",
       "cancelWeixinLogin",
+      "listTeamsInstallations",
       "registerSlackBYO",
       "registerDingTalkBYO",
       "registerWecomBYO",
       "registerTelegramBot",
+      "registerTeamsBot",
       "deleteLarkInstallation",
       "deleteSlackInstallation",
       "deleteDingTalkInstallation",
       "deleteWecomInstallation",
       "deleteTelegramInstallation",
       "deleteWeixinInstallation",
+      "deleteTeamsInstallation",
       "listAgentDingTalkGroups",
       "listAgents",
       "beginLarkInstall",
@@ -129,6 +132,7 @@ beforeEach(() => {
     "listWecomInstallations",
     "listTelegramInstallations",
     "listWeixinInstallations",
+    "listTeamsInstallations",
   ] as const) {
     vi.mocked(api[name]).mockResolvedValue(listing() as never);
   }
@@ -349,7 +353,7 @@ describe("agent messaging channels", () => {
     expect(screen.queryByText("Telegram")).toBeNull();
   });
 
-  it.each(["lark", "slack", "dingtalk", "wecom", "telegram", "weixin"] as const)(
+  it.each(["lark", "slack", "dingtalk", "wecom", "telegram", "weixin", "teams"] as const)(
     "confirms %s disconnect and preserves the connection on failure",
     async (channel) => {
       if (channel === "weixin") state.role = "member";
@@ -360,6 +364,7 @@ describe("agent messaging channels", () => {
         wecom: ["listWecomInstallations", "deleteWecomInstallation"],
         telegram: ["listTelegramInstallations", "deleteTelegramInstallation"],
         weixin: ["listWeixinInstallations", "deleteWeixinInstallation"],
+        teams: ["listTeamsInstallations", "deleteTeamsInstallation"],
       } as const;
       const [list, remove] = methods[channel];
       vi.mocked(api[list]).mockResolvedValue(listing([active]) as never);
@@ -584,6 +589,43 @@ describe("shared connection dialog", () => {
     },
   );
 
+  it("connects a Microsoft Teams bot with the agent name as the default bot name", async () => {
+    const close = vi.fn();
+    vi.mocked(api.registerTeamsBot).mockResolvedValue(active as never);
+    show(
+      <ChannelConnectDialog
+        agents={[agent]}
+        initialAgent={agent}
+        open
+        onOpenChange={close}
+      />,
+    );
+    const teams = await screen.findByRole("button", {
+      name: /^Microsoft Teams$/,
+    });
+    await waitFor(() => expect(teams).toBeEnabled());
+    fireEvent.click(teams);
+    fireEvent.change(screen.getByLabelText("Microsoft App ID"), {
+      target: { value: " app " },
+    });
+    fireEvent.change(screen.getByLabelText("Tenant ID"), {
+      target: { value: " tenant " },
+    });
+    fireEvent.change(screen.getByLabelText("Client secret (value)"), {
+      target: { value: " secret " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() =>
+      expect(api.registerTeamsBot).toHaveBeenCalledWith("ws-1", "agent-1", {
+        app_id: "app",
+        tenant_id: "tenant",
+        app_secret: "secret",
+        bot_name: "Mika",
+      }),
+    );
+    await waitFor(() => expect(close).toHaveBeenCalledWith(false));
+  });
+
   it("keeps inputs and localized WeCom errors after rejected credentials", async () => {
     vi.mocked(api.registerWecomBYO).mockRejectedValue(
       new ApiError("English server detail", 400, "Bad Request", {
@@ -666,7 +708,7 @@ describe("workspace overview", () => {
     );
     expect(state.replace).toHaveBeenCalledWith("/acme/settings?tab=channels");
     expect(screen.getByText("Who can connect")).toBeInTheDocument();
-    expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(6);
+    expect(screen.getAllByRole("button", { name: "Connect" })).toHaveLength(7);
   });
 
   it("reports failed reads as unavailable and keeps a retry control", async () => {

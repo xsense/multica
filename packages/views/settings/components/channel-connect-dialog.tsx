@@ -28,6 +28,7 @@ import { useMessagingChannels } from "./use-messaging-channels";
 import { LarkChannelAuthorization } from "./lark-channel-authorization";
 import { WecomChannelAuthorization } from "./wecom-channel-authorization";
 import { WeixinChannelAuthorization } from "./weixin-channel-authorization";
+import { TeamsChannelAuthorization } from "./teams-channel-authorization";
 
 export function ChannelConnectDialog({
   agents,
@@ -229,7 +230,7 @@ function ChannelConnectSteps({
         </>
       ) : (
         <>
-          {channel === "weixin" ? null : (
+          {channel === "weixin" || channel === "teams" ? null : (
             <Button variant="link" className="w-fit p-0" onClick={openGuide}>
               {t(($) => $.channels.setup_guide)}
             </Button>
@@ -267,6 +268,14 @@ function ChannelConnectSteps({
               region="feishu"
               onClose={onClose}
             />
+          ) : channel === "teams" ? (
+            <TeamsChannelAuthorization
+              wsId={wsId}
+              agentId={agent.id}
+              agentName={agent.name}
+              onClose={onClose}
+              onBusyChange={onBusyChange}
+            />
           ) : channel === "weixin" ? (
             // The QR is the whole step, so its guide moves below it.
             <WeixinChannelAuthorization
@@ -303,7 +312,7 @@ function ChannelCredentials({
   onClose,
   onBusyChange,
 }: {
-  channel: Exclude<ChannelIntegration, "lark" | "weixin">;
+  channel: Exclude<ChannelIntegration, "lark" | "weixin" | "teams">;
   wsId: string;
   agentId: string;
   onClose: () => void;

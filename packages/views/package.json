@@ -70,6 +70,7 @@
     "./dingtalk": "./dingtalk/index.ts",
     "./wecom": "./wecom/index.ts",
     "./telegram": "./telegram/index.ts",
+    "./teams": "./teams/index.ts",
     "./invitations": "./invitations/index.ts",
     "./onboarding": "./onboarding/index.ts",
     "./star-prompt": "./star-prompt/index.ts",
