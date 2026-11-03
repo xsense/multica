@@ -8,6 +8,7 @@ import { slackInstallationsOptions } from "@multica/core/slack";
 import { dingtalkInstallationsOptions } from "@multica/core/dingtalk";
 import { wecomInstallationsOptions } from "@multica/core/wecom";
 import { telegramInstallationsOptions } from "@multica/core/telegram";
+import { teamsInstallationsOptions } from "@multica/core/teams";
 import type {
   Agent,
   LarkInstallation,
@@ -15,6 +16,7 @@ import type {
   DingTalkInstallation,
   WecomInstallation,
   TelegramInstallation,
+  TeamsInstallation,
 } from "@multica/core/types";
 import type { ChannelIntegration } from "./settings-navigation";
 
@@ -23,7 +25,8 @@ export type ChannelConnection =
   | { channel: "slack"; installation: SlackInstallation }
   | { channel: "dingtalk"; installation: DingTalkInstallation }
   | { channel: "wecom"; installation: WecomInstallation }
-  | { channel: "telegram"; installation: TelegramInstallation };
+  | { channel: "telegram"; installation: TelegramInstallation }
+  | { channel: "teams"; installation: TeamsInstallation };
 
 export function channelChatLink(
   connection: ChannelConnection,
@@ -42,6 +45,11 @@ export function channelChatLink(
       return connection.installation.bot_username
         ? `https://t.me/${encodeURIComponent(connection.installation.bot_username)}`
         : undefined;
+    case "teams":
+      // Opens a 1:1 chat with the bot; Teams resolves bots by "28:<app id>".
+      return connection.installation.app_id
+        ? `https://teams.microsoft.com/l/chat/0/0?users=28:${encodeURIComponent(connection.installation.app_id)}`
+        : undefined;
     default:
       return undefined;
   }
@@ -56,7 +64,8 @@ export function useMessagingChannels() {
   const dingtalk = useQuery({ ...dingtalkInstallationsOptions(wsId), enabled });
   const wecom = useQuery({ ...wecomInstallationsOptions(wsId), enabled });
   const telegram = useQuery({ ...telegramInstallationsOptions(wsId), enabled });
-  const queries = { lark, slack, dingtalk, wecom, telegram };
+  const teams = useQuery({ ...teamsInstallationsOptions(wsId), enabled });
+  const queries = { lark, slack, dingtalk, wecom, telegram, teams };
   const connections: ChannelConnection[] = [
     ...(lark.data?.installations ?? []).map((installation) => ({
       channel: "lark" as const,
@@ -76,6 +85,10 @@ export function useMessagingChannels() {
     })),
     ...(telegram.data?.installations ?? []).map((installation) => ({
       channel: "telegram" as const,
+      installation,
+    })),
+    ...(teams.data?.installations ?? []).map((installation) => ({
+      channel: "teams" as const,
       installation,
     })),
   ].filter(({ installation }) => installation.status === "active");

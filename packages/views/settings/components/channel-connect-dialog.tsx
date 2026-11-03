@@ -27,6 +27,7 @@ import {
 import { useMessagingChannels } from "./use-messaging-channels";
 import { LarkChannelAuthorization } from "./lark-channel-authorization";
 import { WecomChannelAuthorization } from "./wecom-channel-authorization";
+import { TeamsChannelAuthorization } from "./teams-channel-authorization";
 
 export function ChannelConnectDialog({
   agents,
@@ -224,17 +225,19 @@ function ChannelConnectSteps({
         </>
       ) : (
         <>
-          <Button
-            variant="link"
-            className="w-fit p-0"
-            onClick={() =>
-              openExternal(
-                `https://multica.ai/docs${docsLocalePrefix(i18n.language)}/${channel === "lark" ? "lark" : channel}-bot-integration`,
-              )
-            }
-          >
-            {t(($) => $.channels.setup_guide)}
-          </Button>
+          {channel !== "teams" ? (
+            <Button
+              variant="link"
+              className="w-fit p-0"
+              onClick={() =>
+                openExternal(
+                  `https://multica.ai/docs${docsLocalePrefix(i18n.language)}/${channel === "lark" ? "lark" : channel}-bot-integration`,
+                )
+              }
+            >
+              {t(($) => $.channels.setup_guide)}
+            </Button>
+          ) : null}
           {channel === "wecom" && queries.wecom.data?.scan_install_supported ? (
             <div className="space-y-1.5">
               <Label htmlFor="channel-method">
@@ -268,6 +271,14 @@ function ChannelConnectSteps({
               region="feishu"
               onClose={onClose}
             />
+          ) : channel === "teams" ? (
+            <TeamsChannelAuthorization
+              wsId={wsId}
+              agentId={agent.id}
+              agentName={agent.name}
+              onClose={onClose}
+              onBusyChange={onBusyChange}
+            />
           ) : scanWecom ? (
             <WecomChannelAuthorization
               wsId={wsId}
@@ -296,7 +307,7 @@ function ChannelCredentials({
   onClose,
   onBusyChange,
 }: {
-  channel: Exclude<ChannelIntegration, "lark">;
+  channel: Exclude<ChannelIntegration, "lark" | "teams">;
   wsId: string;
   agentId: string;
   onClose: () => void;
