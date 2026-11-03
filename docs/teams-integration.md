@@ -48,6 +48,7 @@ Frontend
 * `packages/views/settings/components/channels-tab.tsx`,
   `integration-channel-icon.tsx`, `settings-navigation.ts`
 * `packages/views/agents/components/tabs/integrations-tab.tsx` (+ test)
+* `packages/views/agents/components/agent-overview-pane.tsx` (+ test) — shows the Integrations tab when only Teams is configured
 * `packages/views/settings/components/channels-tab.test.tsx`
 * `packages/views/locales/*/{settings,common}.json` (`teams`, `teams_bind`)
 * `packages/views/package.json` (exports)

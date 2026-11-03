@@ -91,6 +91,12 @@ vi.mock("@multica/core/telegram", () => ({
     queryFn: () => Promise.resolve(telegramListingRef.current),
   }),
 }));
+vi.mock("@multica/core/teams", () => ({
+  teamsInstallationsOptions: () => ({
+    queryKey: ["teams", "installations"],
+    queryFn: () => Promise.resolve(telegramListingRef.current),
+  }),
+}));
 
 import { AgentOverviewPane } from "./agent-overview-pane";
 
