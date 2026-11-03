@@ -23,10 +23,10 @@ agent finishes ─► EventChatDone ─► teams.Outbound ─► Connector REST 
   `MULTICA_TEAMS_SECRET_KEY` (base64, 32 bytes).
 * Sessions: personal chat and group chat = one session each; a channel
   thread (`19:…;messageid=<root>`) = one session.
-* Identity: Teams user (Entra object id) is bound to the Multica user with
-  the same email on first message (member lookup through the Connector),
-  falling back to the one-time bind link (`/teams/bind`). Disable the email
-  match with `MULTICA_TEAMS_AUTO_BIND_BY_EMAIL=false`.
+* Identity: by default a Teams user links through the one-time bind link
+  (`/teams/bind`). Opt-in: with `MULTICA_TEAMS_AUTO_BIND_DOMAINS` set, a
+  non-guest whose directory email is on a listed (tenant-verified) domain is
+  bound to the Multica user with that email on first message.
 * Typing indicator refreshed every 3 s while the run is going (max 15 min).
 * `/issue` issues carry `origin_id` = chat session but no `origin_type`:
   `issue_origin_type_check` is rewritten by upstream whenever it adds a
