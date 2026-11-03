@@ -34,6 +34,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/ghsnapshot"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
+	"github.com/multica-ai/multica/server/internal/integrations/teams"
 	"github.com/multica-ai/multica/server/internal/integrations/telegram"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	"github.com/multica-ai/multica/server/internal/integrations/weixin"
@@ -413,6 +414,16 @@ type Handler struct {
 
 	WeixinInstall  *weixin.InstallService
 	WeixinOutbound *weixin.Outbound
+
+	// Microsoft Teams (fork addition). Nil unless MULTICA_TEAMS_SECRET_KEY
+	// is set. TeamsWebhook serves the Bot Framework messaging endpoint;
+	// TeamsMessagingEndpoint is that endpoint's public URL and TeamsAppURL the
+	// web app origin, both shown/used by the Teams settings page.
+	TeamsInstall           *teams.InstallService
+	TeamsBindingTokens     *teams.BindingTokenService
+	TeamsWebhook           *teams.Webhook
+	TeamsMessagingEndpoint string
+	TeamsAppURL            string
 
 	// channelFileDelivery names the channel types that can, IN THIS
 	// DEPLOYMENT, carry a file the agent produced the last hop into the
