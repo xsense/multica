@@ -32,8 +32,12 @@ type TypingManager struct {
 	logger    *slog.Logger
 
 	mu     sync.Mutex
-	active map[string]context.CancelFunc // chat_session_id → stop
+	active map[string]*typingLoop // chat_session_id → running loop
 }
+
+// typingLoop identifies one running indicator, so a loop that ends late can
+// remove only its own entry and never a newer loop's for the same session.
+type typingLoop struct{ cancel context.CancelFunc }
 
 var _ engine.TypingNotifier = (*TypingManager)(nil)
 
@@ -42,7 +46,7 @@ func NewTypingManager(transport *Transport, logger *slog.Logger) *TypingManager 
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &TypingManager{transport: transport, logger: logger, active: make(map[string]context.CancelFunc)}
+	return &TypingManager{transport: transport, logger: logger, active: make(map[string]*typingLoop)}
 }
 
 // Register clears the indicator however the run ends.
@@ -53,6 +57,9 @@ func (m *TypingManager) Register(bus *events.Bus) {
 }
 
 func (m *TypingManager) handleEnd(e events.Event) {
+	if taskFailureRetryPending(e.Payload) {
+		return // the retry keeps working; keep showing it
+	}
 	if e.ChatSessionID != "" {
 		m.stop(e.ChatSessionID)
 	}
@@ -82,11 +89,12 @@ func (m *TypingManager) OnIngested(ctx context.Context, inst engine.ResolvedInst
 		return
 	}
 	runCtx, cancel := context.WithTimeout(context.Background(), typingMaxSpan)
-	m.active[key] = cancel
+	loop := &typingLoop{cancel: cancel}
+	m.active[key] = loop
 	m.mu.Unlock()
 
 	go func() {
-		defer m.stop(key)
+		defer m.release(key, loop)
 		t := time.NewTicker(typingInterval)
 		defer t.Stop()
 		for {
@@ -115,12 +123,24 @@ func (m *TypingManager) OnSettled(_ context.Context, sessionID pgtype.UUID, _ en
 	}
 }
 
+// stop ends whatever loop currently runs for the session.
 func (m *TypingManager) stop(key string) {
 	m.mu.Lock()
-	cancel, ok := m.active[key]
+	loop, ok := m.active[key]
 	delete(m.active, key)
 	m.mu.Unlock()
 	if ok {
-		cancel()
+		loop.cancel()
 	}
+}
+
+// release is a loop's own exit: it removes the entry only if it is still the
+// loop's, so it cannot stop a newer indicator for the same session.
+func (m *TypingManager) release(key string, loop *typingLoop) {
+	m.mu.Lock()
+	if m.active[key] == loop {
+		delete(m.active, key)
+	}
+	m.mu.Unlock()
+	loop.cancel()
 }

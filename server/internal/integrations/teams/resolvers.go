@@ -36,9 +36,12 @@ type ResolverSetConfig struct {
 	Transport *Transport
 	Replier   engine.OutboundReplier
 	Typing    engine.TypingNotifier
-	// AutoBindByEmail binds a Teams user to the Multica account with the same
-	// email the first time they message the bot (default on in the wiring).
-	AutoBindByEmail bool
+	// AutoBindDomains enables binding a Teams user to the Multica account
+	// with the same email on first contact, for addresses on these domains
+	// only (lower-case, no "@"). Empty = off: everyone uses the bind link.
+	// Only list domains your tenant has verified — the email comes from the
+	// tenant directory, which tenant admins can edit.
+	AutoBindDomains []string
 	Logger          *slog.Logger
 }
 
@@ -55,7 +58,7 @@ func NewResolverSet(cfg ResolverSetConfig) engine.ResolverSet {
 		Identity: &identityResolver{
 			q:         cfg.Queries,
 			transport: cfg.Transport,
-			autoBind:  cfg.AutoBindByEmail,
+			domains:   normalizeDomains(cfg.AutoBindDomains),
 			logger:    logger,
 		},
 		Dedup: &deduper{q: cfg.Queries},
@@ -169,8 +172,19 @@ type identityQueries interface {
 type identityResolver struct {
 	q         identityQueries
 	transport *Transport
-	autoBind  bool
+	domains   map[string]bool
 	logger    *slog.Logger
+}
+
+func normalizeDomains(in []string) map[string]bool {
+	out := make(map[string]bool, len(in))
+	for _, d := range in {
+		d = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(d), "@")))
+		if d != "" {
+			out[d] = true
+		}
+	}
+	return out
 }
 
 // memberLookupTimeout bounds the Connector member lookup on the inbound path.
@@ -188,7 +202,7 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		return engine.ResolvedIdentity{}, err
 	}
 
-	if !r.autoBind {
+	if len(r.domains) == 0 {
 		return engine.ResolvedIdentity{}, engine.ErrSenderUnbound
 	}
 	userID, ok := r.bindByEmail(ctx, inst, msg)
@@ -214,13 +228,14 @@ func (r *identityResolver) requireMember(ctx context.Context, inst engine.Resolv
 // bindByEmail asks the Connector for the sender's email and, when it belongs
 // to a member of the installation's workspace, records the binding.
 //
-// Trust: the webhook has already proven the activity came from the Connector
-// for this bot and that the conversation belongs to the installation's
-// tenant, and the member lookup is an authenticated Connector call for that
-// same conversation. The email is therefore the tenant's own directory value
-// for the person who sent the message — the same proof of mailbox ownership
-// Multica's email-code login relies on. Anyone else falls back to the
-// one-time bind link.
+// Trust: the webhook has proven the activity came from the Connector for
+// this bot and that the conversation belongs to the installation's tenant;
+// the member lookup is an authenticated Connector call for that conversation.
+// The email is the tenant directory's value for the sender. That is only as
+// trustworthy as the directory, which tenant admins (and guest invites) can
+// set to any address, so it is accepted only when: the member is not a
+// guest, and the address is on an operator-allowlisted domain (one the
+// tenant has verified). Everyone else falls back to the one-time bind link.
 func (r *identityResolver) bindByEmail(ctx context.Context, inst engine.ResolvedInstallation, msg channel.InboundMessage) (pgtype.UUID, bool) {
 	row, ok := inst.Platform.(db.ChannelInstallation)
 	if !ok || r.transport == nil {
@@ -249,8 +264,14 @@ func (r *identityResolver) bindByEmail(ctx context.Context, inst engine.Resolved
 		// The lookup must describe the same person the binding is keyed by.
 		return pgtype.UUID{}, false
 	}
+	if strings.EqualFold(member.UserRole, "guest") {
+		return pgtype.UUID{}, false
+	}
 	email := memberEmail(member)
 	if email == "" {
+		return pgtype.UUID{}, false
+	}
+	if _, domain, _ := strings.Cut(email, "@"); !r.domains[domain] {
 		return pgtype.UUID{}, false
 	}
 	user, err := r.q.GetUserByEmail(ctx, email)

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/integrations/channel"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -17,7 +19,7 @@ import (
 
 // This file is the Teams messaging endpoint: the Bot Framework Connector POSTs
 // every activity for every Teams bot connected to this deployment to one URL
-// (POST /api/teams/messages). The handler identifies the bot from the
+// (POST /api/webhooks/teams). The handler identifies the bot from the
 // activity, proves the request came from the Connector for that bot, checks
 // the tenant, and hands message activities to the shared engine.Router.
 
@@ -35,9 +37,26 @@ type webhookQueries interface {
 	GetChannelInstallationByAppID(ctx context.Context, arg db.GetChannelInstallationByAppIDParams) (db.ChannelInstallation, error)
 }
 
-// Webhook serves POST /api/teams/messages.
+// execer runs one statement; *pgxpool.Pool satisfies it.
+type execer interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+}
+
+// refreshServiceURLSQL keeps the reply route current. The engine writes a
+// binding's config once, when the session is created, but Teams moves
+// conversations between Connector endpoints over time (regional and
+// per-tenant serviceUrl paths). Every verified inbound activity carries the
+// endpoint the Connector currently accepts replies on; store it before the
+// engine runs so the task's delivery snapshot picks it up.
+const refreshServiceURLSQL = `UPDATE channel_chat_session_binding
+SET config = config || jsonb_build_object('service_url', $3::text)
+WHERE installation_id = $1 AND channel_type = 'teams' AND channel_chat_id = $2
+  AND config->>'service_url' IS DISTINCT FROM $3::text`
+
+// Webhook serves POST /api/webhooks/teams.
 type Webhook struct {
 	q         webhookQueries
+	db        execer
 	transport *Transport
 	auth      *Authenticator
 	handle    channel.InboundHandler
@@ -48,7 +67,9 @@ type Webhook struct {
 
 // WebhookConfig wires the endpoint.
 type WebhookConfig struct {
-	Queries   *db.Queries
+	Queries *db.Queries
+	// DB refreshes stored reply routes (normally the pgx pool). Optional.
+	DB        execer
 	Transport *Transport
 	// Auth defaults to the public Bot Framework metadata.
 	Auth *Authenticator
@@ -69,6 +90,7 @@ func NewWebhook(cfg WebhookConfig) *Webhook {
 	}
 	return &Webhook{
 		q:         cfg.Queries,
+		db:        cfg.DB,
 		transport: cfg.Transport,
 		auth:      auth,
 		handle:    cfg.Handle,
@@ -154,7 +176,7 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 
 	switch act.Type {
 	case "message":
-		w.handleMessage(ctx, rw, act, appID, tenantID, conn, inst.Status == "active")
+		w.handleMessage(ctx, rw, act, appID, tenantID, conn, inst.ID, inst.Status == "active")
 	case "conversationUpdate":
 		w.handleConversationUpdate(act, conn, inst.Status == "active")
 		rw.WriteHeader(http.StatusOK)
@@ -170,7 +192,7 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (w *Webhook) handleMessage(ctx context.Context, rw http.ResponseWriter, act Activity, appID, tenantID string, conn *connector, active bool) {
+func (w *Webhook) handleMessage(ctx context.Context, rw http.ResponseWriter, act Activity, appID, tenantID string, conn *connector, instID pgtype.UUID, active bool) {
 	msg, ok := inboundFromActivity(act, appID, tenantID)
 	if !ok {
 		rw.WriteHeader(http.StatusOK)
@@ -193,13 +215,17 @@ func (w *Webhook) handleMessage(ctx context.Context, rw http.ResponseWriter, act
 
 	hctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), handleTimeout)
 	defer cancel()
+	if w.db != nil {
+		if _, err := w.db.Exec(hctx, refreshServiceURLSQL, instID, msg.Source.ChatID, act.ServiceURL); err != nil {
+			w.logger.WarnContext(ctx, "teams webhook: refresh reply route failed", "error", err)
+		}
+	}
 	if err := w.handle(hctx, msg); err != nil {
 		// Infrastructure failure: let the Connector redeliver. The engine's
 		// (installation, message_id) dedup absorbs a delivery that did land.
+		// No user notice here: the Connector retries a 5xx, and each retry
+		// would post it again. A retry that also fails is logged.
 		w.logger.ErrorContext(ctx, "teams webhook: engine rejected message", "app_id", appID, "error", err)
-		if isAddressedIssueCommand(msg) {
-			w.notify(act, conn, msgIssueFailed)
-		}
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}

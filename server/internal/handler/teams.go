@@ -250,7 +250,7 @@ func (h *Handler) DownloadTeamsAppPackage(w http.ResponseWriter, r *http.Request
 		Version: "1.0." + itoa(row.UpdatedAt.Time.Unix()/60%1_000_000),
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		writeError(w, http.StatusInternalServerError, "could not build the Teams app package (is MULTICA_APP_URL an https URL?)")
 		return
 	}
 	name := "multica-teams-" + strings.ReplaceAll(strings.ToLower(firstNonEmptyString(info.BotName, "bot")), " ", "-") + ".zip"

@@ -270,6 +270,9 @@ var (
 	reListItem  = regexp.MustCompile(`(?i)<li[^>]*>`)
 	reAnyTag    = regexp.MustCompile(`(?s)<[^>]+>`)
 	reManyBlank = regexp.MustCompile(`\n{3,}`)
+	// reHTMLish recognizes the markup Teams actually sends, so plain text
+	// that merely contains "<" is not run through tag stripping.
+	reHTMLish = regexp.MustCompile(`(?i)<(at|p|br|div|span|b|i|strong|em|ul|ol|li|a|pre|code|blockquote|h[1-6])[\s>/]`)
 )
 
 // cleanText turns Teams message text (plain, or HTML when the user formatted
@@ -278,7 +281,10 @@ var (
 func cleanText(a Activity, appID string) string {
 	text := a.Text
 	botNames := botMentionTexts(a, appID)
-	isHTML := strings.EqualFold(a.TextFormat, "xml") || strings.Contains(text, "<")
+	// Teams marks formatted messages textFormat "xml" (HTML body); a plain
+	// message says "plain" and is taken literally, so "a<b>c" survives.
+	isHTML := strings.EqualFold(a.TextFormat, "xml") ||
+		(!strings.EqualFold(a.TextFormat, "plain") && reHTMLish.MatchString(text))
 	if isHTML {
 		text = reAtTag.ReplaceAllStringFunc(text, func(m string) string {
 			inner := reAtTag.FindStringSubmatch(m)[1]
@@ -296,9 +302,17 @@ func cleanText(a Activity, appID string) string {
 		text = reAnyTag.ReplaceAllString(text, "")
 		text = html.UnescapeString(text)
 	} else {
+		// Plain text: drop only a leading mention of the bot ("@Bot ..."),
+		// never every occurrence of its name.
+		trimmed := strings.TrimSpace(text)
 		for _, n := range botNames {
-			text = strings.ReplaceAll(text, n, "")
+			for _, prefix := range []string{n, "@" + n} {
+				if n != "" && strings.HasPrefix(trimmed, prefix) {
+					trimmed = strings.TrimSpace(trimmed[len(prefix):])
+				}
+			}
 		}
+		text = trimmed
 	}
 	text = strings.ReplaceAll(text, " ", " ")
 	text = strings.ReplaceAll(text, "\r\n", "\n")

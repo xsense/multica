@@ -1272,18 +1272,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			teamsTyping := teams.NewTypingManager(teamsTransport, slog.Default())
 			teamsTyping.Register(bus)
 			channelRouter.Register(teams.TypeTeams, teams.NewResolverSet(teams.ResolverSetConfig{
-				Queries:         queries,
-				Tx:              pool,
-				Transport:       teamsTransport,
-				Replier:         teamsReplier,
-				Typing:          teamsTyping,
-				AutoBindByEmail: strings.TrimSpace(os.Getenv("MULTICA_TEAMS_AUTO_BIND_BY_EMAIL")) != "false",
+				Queries:   queries,
+				Tx:        pool,
+				Transport: teamsTransport,
+				Replier:   teamsReplier,
+				Typing:    teamsTyping,
+				// Opt-in, per verified email domain (comma-separated); empty =
+				// every Teams user links with the one-time bind link.
+				AutoBindDomains: strings.Split(os.Getenv("MULTICA_TEAMS_AUTO_BIND_DOMAINS"), ","),
 				Logger:          slog.Default(),
 			}))
 			teams.NewOutbound(queries, teamsTransport, slog.Default()).Register(bus)
 			teams.RegisterTeams(channelRegistry)
 			h.TeamsWebhook = teams.NewWebhook(teams.WebhookConfig{
 				Queries:   queries,
+				DB:        pool,
 				Transport: teamsTransport,
 				Handle:    channelRouter.Handle,
 				Logger:    slog.Default(),
@@ -1291,6 +1294,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/")
 			if publicURL == "" {
 				publicURL = strings.TrimRight(appURLFromEnv(), "/")
+				slog.Warn("teams: MULTICA_PUBLIC_URL is not set; advertising the messaging endpoint on the app URL — set it if the API is served from a different origin", "app_url", publicURL)
 			}
 			if publicURL != "" {
 				h.TeamsMessagingEndpoint = publicURL + "/api/webhooks/teams"

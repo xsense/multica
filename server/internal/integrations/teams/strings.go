@@ -25,7 +25,6 @@ const (
 	msgChatStarted   = "✅ เริ่ม chat ใหม่ใน Multica แล้ว ข้อความถัดไปจะเข้า chat นี้"
 	msgIssueUsage    = "ใส่ชื่อ issue ด้วยครับ เช่น\n\n`/issue <ชื่องาน>`\n[รายละเอียด] (ไม่ใส่ก็ได้)"
 	msgIssueDisabled = "bot นี้ไม่ได้เชื่อมกับ Multica แล้ว ให้ admin เชื่อมใหม่"
-	msgIssueFailed   = "⚠️ สร้าง issue ไม่สำเร็จเพราะระบบขัดข้อง ลองใหม่อีกครั้งครับ"
 
 	msgTaskFailed = "❌ agent ทำงานรอบนี้ไม่สำเร็จ ลองส่งใหม่อีกครั้ง หรือดูรายละเอียดใน Multica"
 

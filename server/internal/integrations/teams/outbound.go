@@ -174,8 +174,7 @@ func (o *Outbound) deliver(ctx context.Context, e events.Event, text, kind strin
 		return fmt.Errorf("record reply provenance: %w", err)
 	}
 	if rows != 1 {
-		o.logger.WarnContext(ctx, "teams outbound: provenance updated an unexpected number of rows",
-			"rows", rows, "task_id", util.UUIDToString(taskID))
+		return fmt.Errorf("record reply provenance: updated %d assistant rows, want 1 (task %s)", rows, util.UUIDToString(taskID))
 	}
 	for _, id := range ids {
 		if err := o.q.RecordChannelOutboundMessage(ctx, db.RecordChannelOutboundMessageParams{
