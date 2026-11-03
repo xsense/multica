@@ -56,6 +56,15 @@ type signingKey struct {
 }
 
 // keySet fetches and caches the Bot Framework signing keys.
+//
+// Refetches are driven by inbound traffic (an unknown kid, or a stale set),
+// and inbound traffic is unauthenticated until the key is known, so the
+// refetch path is hardened against being steered by it:
+//   - at most one fetch per jwksMinRefetch, whatever triggered it;
+//   - the fetch runs on a detached context, so a caller that drops its
+//     connection cannot cancel it and burn the attempt;
+//   - the data lock is never held across network I/O; concurrent callers
+//     share one in-flight fetch.
 type keySet struct {
 	openIDURL string
 	client    *http.Client
@@ -65,6 +74,7 @@ type keySet struct {
 	keys      map[string]signingKey
 	fetchedAt time.Time
 	lastTry   time.Time
+	inflight  chan struct{} // closed when the running fetch finishes
 }
 
 func newKeySet(openIDURL string, client *http.Client) *keySet {
@@ -80,30 +90,64 @@ func newKeySet(openIDURL string, client *http.Client) *keySet {
 // key returns the signing key for kid, refreshing the cache when it is stale
 // or does not know kid yet (Microsoft adds keys without notice).
 func (k *keySet) key(ctx context.Context, kid string) (signingKey, error) {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	now := k.now()
-	stale := k.keys == nil || now.Sub(k.fetchedAt) > jwksRefreshInterval
-	_, known := k.keys[kid]
-	if stale || (!known && now.Sub(k.lastTry) > jwksMinRefetch) {
-		k.lastTry = now
-		keys, err := k.fetch(ctx)
-		if err != nil {
-			if k.keys == nil {
-				return signingKey{}, err
+	for attempt := 0; attempt < 2; attempt++ {
+		k.mu.Lock()
+		sk, known := k.keys[kid]
+		now := k.now()
+		stale := k.keys == nil || now.Sub(k.fetchedAt) > jwksRefreshInterval
+		needFetch := (stale || !known) && (k.keys == nil || now.Sub(k.lastTry) > jwksMinRefetch)
+		wait := k.inflight
+		if wait == nil && needFetch {
+			k.lastTry = now
+			wait = make(chan struct{})
+			k.inflight = wait
+			go k.refresh(wait)
+		}
+		k.mu.Unlock()
+
+		if known && !stale {
+			return sk, nil
+		}
+		if wait == nil {
+			// Nothing in flight and refetching is rate-limited: answer from
+			// the cache (a stale-but-known key keeps working through a
+			// metadata outage).
+			if known {
+				return sk, nil
 			}
-			// Keep serving the last good set; a transient metadata outage must
-			// not reject every message.
-		} else {
-			k.keys = keys
-			k.fetchedAt = now
+			return signingKey{}, fmt.Errorf("%w: unknown signing key", ErrUnauthenticated)
+		}
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return signingKey{}, fmt.Errorf("%w: %v", ErrUnauthenticated, ctx.Err())
 		}
 	}
-	sk, ok := k.keys[kid]
-	if !ok {
-		return signingKey{}, fmt.Errorf("%w: unknown signing key", ErrUnauthenticated)
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if sk, ok := k.keys[kid]; ok {
+		return sk, nil
 	}
-	return sk, nil
+	return signingKey{}, fmt.Errorf("%w: unknown signing key", ErrUnauthenticated)
+}
+
+// refresh fetches the key set on a detached context and publishes it.
+func (k *keySet) refresh(done chan struct{}) {
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	keys, err := k.fetch(ctx)
+	k.mu.Lock()
+	if err == nil {
+		k.keys = keys
+		k.fetchedAt = k.now()
+	} else if k.keys == nil {
+		// Nothing cached yet: allow the next request to try again at once
+		// rather than rejecting everything for jwksMinRefetch.
+		k.lastTry = time.Time{}
+	}
+	k.inflight = nil
+	k.mu.Unlock()
+	close(done)
 }
 
 func (k *keySet) fetch(ctx context.Context) (map[string]signingKey, error) {

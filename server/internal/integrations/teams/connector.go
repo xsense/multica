@@ -254,6 +254,7 @@ type teamsMember struct {
 	Email             string `json:"email"`
 	UserPrincipalName string `json:"userPrincipalName"`
 	TenantID          string `json:"tenantId"`
+	UserRole          string `json:"userRole"` // "user" | "guest" | "anonymous"
 }
 
 // GetMember looks up one conversation member. Teams fills email and
@@ -316,35 +317,26 @@ func (c *connector) do(ctx context.Context, method, serviceURL, path string, in,
 // an arbitrary host.
 func validServiceURL(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "https" || u.Host == "" {
-		if allowInsecureServiceURLForTests && err == nil && u.Scheme == "http" && u.Host != "" {
-			return strings.TrimRight(raw, "/"), nil
-		}
+	if err == nil && allowInsecureServiceURLForTests && u.Scheme == "http" && u.Host != "" {
+		return strings.TrimRight(u.String(), "/"), nil
+	}
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.Port() != "" || u.User != nil {
 		return "", fmt.Errorf("teams: invalid serviceUrl %q", raw)
 	}
 	host := strings.ToLower(u.Hostname())
-	if !trustedServiceHost(host) {
-		return "", fmt.Errorf("teams: serviceUrl host %q is not a Bot Framework host", host)
+	if !trustedServiceHosts[host] {
+		return "", fmt.Errorf("teams: serviceUrl host %q is not a Teams Connector host", host)
 	}
 	return strings.TrimRight(u.String(), "/"), nil
 }
 
-// trustedServiceHost lists the Connector hosts Teams uses. smba.* serves the
-// public cloud (regional paths under smba.trafficmanager.net); the gov clouds
-// use their own smba hosts.
-func trustedServiceHost(host string) bool {
-	switch {
-	case host == "smba.trafficmanager.net",
-		strings.HasSuffix(host, ".trafficmanager.net") && strings.HasPrefix(host, "smba"),
-		strings.HasSuffix(host, ".botframework.com"),
-		strings.HasSuffix(host, ".botframework.us"),
-		strings.HasSuffix(host, ".botframework.azure.us"),
-		strings.HasSuffix(host, ".infra.gov.teams.microsoft.us"),
-		strings.HasSuffix(host, ".gov.teams.microsoft.us"),
-		strings.HasSuffix(host, ".teams.microsoft.com"):
-		return true
-	}
-	return false
+// trustedServiceHosts are the exact Connector hosts Teams uses in the public
+// commercial cloud and GCC — the clouds whose tokens auth.go accepts (iss
+// https://api.botframework.com). Exact matches only: a suffix such as
+// ".trafficmanager.net" is a namespace any Azure customer can register in.
+var trustedServiceHosts = map[string]bool{
+	"smba.trafficmanager.net":            true,
+	"smba.infra.gcc.teams.microsoft.com": true,
 }
 
 // allowInsecureServiceURLForTests lets httptest servers stand in for the
