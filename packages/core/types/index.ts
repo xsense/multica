@@ -275,6 +275,12 @@ export type {
   RedeemTelegramBindingTokenResponse,
 } from "./telegram";
 export type {
+  TeamsInstallation,
+  ListTeamsInstallationsResponse,
+  RegisterTeamsRequest,
+  RedeemTeamsBindingTokenResponse,
+} from "./teams";
+export type {
   Autopilot,
   AutopilotStatus,
   AutopilotExecutionMode,

@@ -49,6 +49,9 @@ import type {
   TelegramInstallation,
   ListTelegramInstallationsResponse,
   RedeemTelegramBindingTokenResponse,
+  TeamsInstallation,
+  ListTeamsInstallationsResponse,
+  RedeemTeamsBindingTokenResponse,
   GroupedIssuesResponse,
   GitHubConnectResponse,
   IssuePullRequestsResponse,
@@ -3510,6 +3513,59 @@ export const EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE: RedeemTelegramBinding
   workspace_id: "",
   installation_id: "",
   telegram_user_id: "",
+};
+
+// Microsoft Teams (fork addition).
+export const TeamsInstallationSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string().default(""),
+  agent_id: z.string().default(""),
+  app_id: z.string().default(""),
+  tenant_id: z.string().default(""),
+  bot_name: z.string().default(""),
+  installer_user_id: z.string().default(""),
+  status: z.string().default("revoked"),
+  installed_at: z.string().default(""),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const EMPTY_TEAMS_INSTALLATION: TeamsInstallation = {
+  id: "",
+  workspace_id: "",
+  agent_id: "",
+  app_id: "",
+  tenant_id: "",
+  bot_name: "",
+  installer_user_id: "",
+  status: "revoked",
+  installed_at: "",
+  created_at: "",
+  updated_at: "",
+};
+
+export const ListTeamsInstallationsResponseSchema = z.object({
+  installations: z.array(TeamsInstallationSchema).default([]),
+  configured: z.boolean().default(false),
+  install_supported: z.boolean().optional(),
+  messaging_endpoint: z.string().optional(),
+}).loose();
+
+export const EMPTY_LIST_TEAMS_INSTALLATIONS_RESPONSE: ListTeamsInstallationsResponse = {
+  installations: [],
+  configured: false,
+};
+
+export const RedeemTeamsBindingTokenResponseSchema = z.object({
+  workspace_id: z.string().default(""),
+  installation_id: z.string().default(""),
+  teams_user_id: z.string().default(""),
+}).loose();
+
+export const EMPTY_REDEEM_TEAMS_BINDING_TOKEN_RESPONSE: RedeemTeamsBindingTokenResponse = {
+  workspace_id: "",
+  installation_id: "",
+  teams_user_id: "",
 };
 
 // Skills. Introduced for `POST /api/skills/:id/refresh` (update a skill from

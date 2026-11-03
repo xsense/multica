@@ -213,6 +213,10 @@ import type {
   ListTelegramInstallationsResponse,
   RegisterTelegramRequest,
   RedeemTelegramBindingTokenResponse,
+  TeamsInstallation,
+  ListTeamsInstallationsResponse,
+  RegisterTeamsRequest,
+  RedeemTeamsBindingTokenResponse,
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
@@ -392,6 +396,12 @@ import {
   EMPTY_TELEGRAM_INSTALLATION,
   EMPTY_LIST_TELEGRAM_INSTALLATIONS_RESPONSE,
   EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE,
+  TeamsInstallationSchema,
+  ListTeamsInstallationsResponseSchema,
+  RedeemTeamsBindingTokenResponseSchema,
+  EMPTY_TEAMS_INSTALLATION,
+  EMPTY_LIST_TEAMS_INSTALLATIONS_RESPONSE,
+  EMPTY_REDEEM_TEAMS_BINDING_TOKEN_RESPONSE,
   EMPTY_BILLING_BALANCE,
   EMPTY_BILLING_TRANSACTIONS_PAGE,
   EMPTY_BILLING_BATCHES_PAGE,
@@ -5426,6 +5436,59 @@ export class ApiClient {
       RedeemTelegramBindingTokenResponseSchema,
       EMPTY_REDEEM_TELEGRAM_BINDING_TOKEN_RESPONSE,
       { endpoint: "POST /api/telegram/binding/redeem" },
+    );
+  }
+
+  // Microsoft Teams (fork addition).
+  async listTeamsInstallations(workspaceId: string): Promise<ListTeamsInstallationsResponse> {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/teams/installations`);
+    return parseWithFallback(
+      raw,
+      ListTeamsInstallationsResponseSchema,
+      EMPTY_LIST_TEAMS_INSTALLATIONS_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/teams/installations" },
+    );
+  }
+
+  async registerTeamsBot(
+    workspaceId: string,
+    agentId: string,
+    body: RegisterTeamsRequest,
+  ): Promise<TeamsInstallation> {
+    const search = new URLSearchParams({ agent_id: agentId });
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/teams/install?${search.toString()}`,
+      { method: "POST", body: JSON.stringify(body) },
+    );
+    return parseWithFallback(raw, TeamsInstallationSchema, EMPTY_TEAMS_INSTALLATION, {
+      endpoint: "POST /api/workspaces/:id/teams/install",
+    });
+  }
+
+  async deleteTeamsInstallation(workspaceId: string, installationId: string): Promise<void> {
+    await this.fetch(`/api/workspaces/${workspaceId}/teams/installations/${installationId}`, {
+      method: "DELETE",
+    });
+  }
+
+  /** The zipped Teams app package (manifest + icons) for the Teams admin center. */
+  async downloadTeamsAppPackage(workspaceId: string, installationId: string): Promise<Blob> {
+    const res = await this.fetchRaw(
+      `/api/workspaces/${workspaceId}/teams/installations/${installationId}/app-package`,
+    );
+    return res.blob();
+  }
+
+  async redeemTeamsBindingToken(token: string): Promise<RedeemTeamsBindingTokenResponse> {
+    const raw = await this.fetch<unknown>(`/api/teams/binding/redeem`, {
+      method: "POST",
+      body: JSON.stringify({ token }),
+    });
+    return parseWithFallback(
+      raw,
+      RedeemTeamsBindingTokenResponseSchema,
+      EMPTY_REDEEM_TEAMS_BINDING_TOKEN_RESPONSE,
+      { endpoint: "POST /api/teams/binding/redeem" },
     );
   }
 }

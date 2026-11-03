@@ -109,6 +109,21 @@
     "error_not_member": "Vous êtes connecté avec un compte Multica qui n'est pas membre de cet espace de travail.",
     "error_unknown": "Une erreur est survenue. Réessayez et, si le problème persiste, contactez l'administrateur de l'espace de travail."
   },
+  "teams_bind": {
+    "page_title": "Link your Microsoft Teams account",
+    "redeeming": "Linking your account…",
+    "needs_auth_description": "Sign in to Multica to complete the link. The token in the link binds your Teams account to this Multica user, so you must be logged in first.",
+    "sign_in": "Sign in",
+    "done_title": "You're linked.",
+    "done_description": "Your next message to the bot in Teams will go straight to the agent. You can close this tab.",
+    "error_title": "Couldn't complete the link",
+    "error_admin_hint": "If this keeps happening, message the bot again in Teams to get a fresh link.",
+    "error_missing_token": "The link is missing its token. Message the bot again in Teams to get a new one.",
+    "error_expired": "This link is invalid or expired (links are valid for 15 minutes). Message the bot again to get a new one.",
+    "error_already_bound": "This Teams account is already linked to a different Multica user.",
+    "error_not_member": "You're signed in to a Multica account that isn't a member of this workspace.",
+    "error_unknown": "Something went wrong. Try again, and if the problem persists, contact the workspace admin."
+  },
   "expandable_description": {
     "expand": "Afficher plus",
     "collapse": "Afficher moins"
