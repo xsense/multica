@@ -73,7 +73,15 @@ type tokenSource struct {
 
 	mu     sync.Mutex
 	tokens map[string]cachedToken
+	// legacy marks bots whose Connector only accepts tokens minted by the
+	// shared "botframework.com" authority — multi-tenant registrations made
+	// before single-tenant became the default (Teams Developer Portal bots
+	// created before late 2025, older Azure Bots). Learned on the first 401.
+	legacy map[string]bool
 }
+
+// legacyAuthority is the token authority multi-tenant bots use.
+const legacyAuthority = "botframework.com"
 
 type cachedToken struct {
 	value     string
@@ -92,7 +100,34 @@ func newTokenSource(loginBase string, client *http.Client) *tokenSource {
 		client:    client,
 		now:       time.Now,
 		tokens:    make(map[string]cachedToken),
+		legacy:    make(map[string]bool),
 	}
+}
+
+func appKey(creds credentials) string { return creds.TenantID + "|" + creds.AppID }
+
+// authority returns the tenant the bot's tokens are minted in.
+func (s *tokenSource) authority(creds credentials) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.legacy[appKey(creds)] {
+		return legacyAuthority
+	}
+	return creds.TenantID
+}
+
+// fallBackToLegacy switches a bot to the multi-tenant authority after the
+// Connector refused its tenant-issued token. Reports false when the bot was
+// already on it (nothing left to try).
+func (s *tokenSource) fallBackToLegacy(creds credentials) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	k := appKey(creds)
+	if s.legacy[k] {
+		return false
+	}
+	s.legacy[k] = true
+	return true
 }
 
 // Token returns a valid bearer token for creds, minting one when the cache is
@@ -100,7 +135,8 @@ func newTokenSource(loginBase string, client *http.Client) *tokenSource {
 // fingerprint (its length and tail) so a rotated secret does not keep using a
 // token minted by the old one past the rotation — it is minted again.
 func (s *tokenSource) Token(ctx context.Context, creds credentials) (string, error) {
-	key := creds.TenantID + "|" + creds.AppID + "|" + secretFingerprint(creds.AppSecret)
+	authority := s.authority(creds)
+	key := authority + "|" + creds.AppID + "|" + secretFingerprint(creds.AppSecret)
 	s.mu.Lock()
 	if t, ok := s.tokens[key]; ok && s.now().Add(tokenRefreshMargin).Before(t.expiresAt) {
 		s.mu.Unlock()
@@ -108,7 +144,7 @@ func (s *tokenSource) Token(ctx context.Context, creds credentials) (string, err
 	}
 	s.mu.Unlock()
 
-	tok, err := s.mint(ctx, creds)
+	tok, err := s.mintFrom(ctx, creds, authority)
 	if err != nil {
 		return "", err
 	}
@@ -125,13 +161,18 @@ func secretFingerprint(secret string) string {
 	return fmt.Sprintf("%d:%s", len(secret), secret[len(secret)-4:])
 }
 
+// mint obtains a token from the bot's own tenant (install-time check).
 func (s *tokenSource) mint(ctx context.Context, creds credentials) (cachedToken, error) {
+	return s.mintFrom(ctx, creds, creds.TenantID)
+}
+
+func (s *tokenSource) mintFrom(ctx context.Context, creds credentials, authority string) (cachedToken, error) {
 	form := url.Values{}
 	form.Set("grant_type", "client_credentials")
 	form.Set("client_id", creds.AppID)
 	form.Set("client_secret", creds.AppSecret)
 	form.Set("scope", connectorScope)
-	endpoint := s.loginBase + "/" + url.PathEscape(creds.TenantID) + "/oauth2/v2.0/token"
+	endpoint := s.loginBase + "/" + url.PathEscape(authority) + "/oauth2/v2.0/token"
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
 	if err != nil {
@@ -273,41 +314,58 @@ func (c *connector) do(ctx context.Context, method, serviceURL, path string, in,
 	if err != nil {
 		return err
 	}
-	token, err := c.tokens.Token(ctx, c.creds)
-	if err != nil {
-		return err
-	}
-	var body io.Reader
+	var payload []byte
 	if in != nil {
-		buf, err := json.Marshal(in)
-		if err != nil {
+		if payload, err = json.Marshal(in); err != nil {
 			return err
 		}
-		body = bytes.NewReader(buf)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, base+path, body)
+	for attempt := 0; ; attempt++ {
+		status, raw, err := c.send(ctx, method, base+path, payload)
+		if err != nil {
+			return fmt.Errorf("teams connector %s %s: %w", method, path, err)
+		}
+		if status == http.StatusUnauthorized && attempt == 0 && c.tokens.fallBackToLegacy(c.creds) {
+			// A multi-tenant registration rejects tenant-issued tokens; try
+			// the shared authority once and remember the answer.
+			continue
+		}
+		if status < 200 || status > 299 {
+			return &apiError{Status: status, Body: truncate(string(raw), maxErrorBody)}
+		}
+		if out != nil && len(bytes.TrimSpace(raw)) > 0 {
+			if err := json.Unmarshal(raw, out); err != nil {
+				return fmt.Errorf("teams connector: decode response: %w", err)
+			}
+		}
+		return nil
+	}
+}
+
+func (c *connector) send(ctx context.Context, method, url string, payload []byte) (int, []byte, error) {
+	token, err := c.tokens.Token(ctx, c.creds)
 	if err != nil {
-		return err
+		return 0, nil, err
+	}
+	var body io.Reader
+	if payload != nil {
+		body = bytes.NewReader(payload)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
+	if err != nil {
+		return 0, nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	if in != nil {
+	if payload != nil {
 		req.Header.Set("Content-Type", "application/json; charset=utf-8")
 	}
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return fmt.Errorf("teams connector %s %s: %w", method, path, err)
+		return 0, nil, err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode > 299 {
-		return &apiError{Status: resp.StatusCode, Body: truncate(string(raw), maxErrorBody)}
-	}
-	if out != nil && len(bytes.TrimSpace(raw)) > 0 {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return fmt.Errorf("teams connector: decode response: %w", err)
-		}
-	}
-	return nil
+	return resp.StatusCode, raw, nil
 }
 
 // validServiceURL guards the one URL we take from inbound traffic. The

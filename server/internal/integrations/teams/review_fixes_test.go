@@ -197,3 +197,38 @@ func TestPlainTextKeepsAngleBracketsAndBotNameInBody(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+// ---- legacy multi-tenant bots: fall back to the botframework.com authority ----
+
+func TestConnectorFallsBackToLegacyAuthorityOn401(t *testing.T) {
+	var legacyMints atomic.Int32
+	mux := http.NewServeMux()
+	mux.HandleFunc("/"+testTenantID+"/oauth2/v2.0/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "tenant-token", "expires_in": 3600})
+	})
+	mux.HandleFunc("/botframework.com/oauth2/v2.0/token", func(w http.ResponseWriter, r *http.Request) {
+		legacyMints.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{"access_token": "legacy-token", "expires_in": 3600})
+	})
+	mux.HandleFunc("/v3/conversations/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer legacy-token" {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": "ok"})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	tr := newTransport(nil, srv.URL, srv.Client())
+	creds := credentials{AppID: testAppID, TenantID: testTenantID, AppSecret: "s3cret"}
+	conn := newConnector(creds, tr.tokens, srv.Client())
+	for i := 0; i < 2; i++ {
+		id, err := conn.SendMessage(context.Background(), srv.URL, "a:1", "hi", "")
+		if err != nil || id != "ok" {
+			t.Fatalf("send %d: id=%q err=%v", i, id, err)
+		}
+	}
+	if legacyMints.Load() != 1 {
+		t.Fatalf("legacy token minted %d times, want 1 (cached after fallback)", legacyMints.Load())
+	}
+}
