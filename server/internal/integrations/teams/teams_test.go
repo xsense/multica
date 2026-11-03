@@ -416,7 +416,14 @@ func TestValidServiceURLRejectsForeignHosts(t *testing.T) {
 			t.Fatalf("%s: %v", ok, err)
 		}
 	}
-	for _, bad := range []string{"http://smba.trafficmanager.net/apac/", "https://evil.example/", "https://smba.trafficmanager.net.evil.example/"} {
+	for _, bad := range []string{
+		"http://smba.trafficmanager.net/apac/",
+		"https://evil.example/",
+		"https://smba.trafficmanager.net.evil.example/",
+		"https://smbaevil.trafficmanager.net/",
+		"https://smba.trafficmanager.net:8443/apac/",
+		"https://user@smba.trafficmanager.net/apac/",
+	} {
 		if _, err := validServiceURL(bad); err == nil {
 			t.Fatalf("%s should be rejected", bad)
 		}
