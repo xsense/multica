@@ -35,6 +35,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/integrations/dingtalk"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	"github.com/multica-ai/multica/server/internal/integrations/slack"
+	"github.com/multica-ai/multica/server/internal/integrations/teams"
 	"github.com/multica-ai/multica/server/internal/integrations/telegram"
 	"github.com/multica-ai/multica/server/internal/integrations/wecom"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -1246,6 +1247,67 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Info("telegram integration disabled (MULTICA_TELEGRAM_SECRET_KEY not set)")
 	}
 
+	// Microsoft Teams integration (fork addition — see
+	// docs/teams-integration.md). Same BYO shape as Telegram: an admin pastes
+	// an Azure Bot's App ID / tenant / client secret per agent. Inbound is the
+	// public Bot Framework messaging endpoint POST /api/webhooks/teams (no
+	// socket to supervise; the registered Factory is passive). Gated by
+	// MULTICA_TEAMS_SECRET_KEY, the at-rest secret encryption key.
+	if teamsKey, err := secretbox.LoadKey("MULTICA_TEAMS_SECRET_KEY"); err == nil {
+		box, err := secretbox.New(teamsKey)
+		if err != nil {
+			slog.Error("teams: secretbox.New failed; teams integration disabled", "error", err)
+		} else {
+			teamsTransport := teams.NewTransport(box.Open)
+			teamsBindingSvc := teams.NewBindingTokenService(queries, pool)
+			h.TeamsBindingTokens = teamsBindingSvc
+			teamsReplier := teams.NewOutboundReplier(teams.OutboundReplierConfig{
+				Binding:   teamsBindingSvc,
+				Transport: teamsTransport,
+				AppURL:    appURLFromEnv(),
+				Logger:    slog.Default(),
+			})
+			// Typing indicator first so EventChatDone stops it before the
+			// reply subscriber runs (bus delivery is in subscription order).
+			teamsTyping := teams.NewTypingManager(teamsTransport, slog.Default())
+			teamsTyping.Register(bus)
+			channelRouter.Register(teams.TypeTeams, teams.NewResolverSet(teams.ResolverSetConfig{
+				Queries:         queries,
+				Tx:              pool,
+				Transport:       teamsTransport,
+				Replier:         teamsReplier,
+				Typing:          teamsTyping,
+				AutoBindByEmail: strings.TrimSpace(os.Getenv("MULTICA_TEAMS_AUTO_BIND_BY_EMAIL")) != "false",
+				Logger:          slog.Default(),
+			}))
+			teams.NewOutbound(queries, teamsTransport, slog.Default()).Register(bus)
+			teams.RegisterTeams(channelRegistry)
+			h.TeamsWebhook = teams.NewWebhook(teams.WebhookConfig{
+				Queries:   queries,
+				Transport: teamsTransport,
+				Handle:    channelRouter.Handle,
+				Logger:    slog.Default(),
+			})
+			publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/")
+			if publicURL == "" {
+				publicURL = strings.TrimRight(appURLFromEnv(), "/")
+			}
+			if publicURL != "" {
+				h.TeamsMessagingEndpoint = publicURL + "/api/webhooks/teams"
+			}
+			h.TeamsAppURL = appURLFromEnv()
+			installSvc, ierr := teams.NewInstallService(queries, pool, box, teamsTransport, slog.Default())
+			if ierr != nil {
+				slog.Error("teams: InstallService init failed; install disabled", "error", ierr)
+			} else {
+				h.TeamsInstall = installSvc
+			}
+			slog.Info("teams integration enabled (Bot Framework messaging endpoint)", "endpoint", h.TeamsMessagingEndpoint)
+		}
+	} else {
+		slog.Info("teams integration disabled (MULTICA_TEAMS_SECRET_KEY not set)")
+	}
+
 	// Composio integration (MUL-3720). Gated by COMPOSIO_API_KEY plus the
 	// composio_mcp_apps feature flag. The env var is the project-scoped key the
 	// standalone SDK authenticates Composio with (sent as x-api-key; the project
@@ -1534,6 +1596,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// GitHub App webhook (no Multica auth — requests are authenticated via
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
+	// Microsoft Teams Bot Framework messaging endpoint (fork addition).
+	// Public: every request carries the Connector JWT, verified inside.
+	r.Post("/api/webhooks/teams", h.HandleTeamsWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
 	// Slack OAuth callback (no Multica auth in the path — it is hit by Slack's
 	// browser redirect; the workspace/agent/initiator are recovered from the
@@ -1885,6 +1950,19 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/telegram/installations/{installationId}", h.RevokeTelegramInstallation)
 					r.Post("/telegram/install", h.RegisterTelegramBot)
 				})
+
+				// Microsoft Teams (fork addition): listing member-visible,
+				// install / revoke / app package admin-only.
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceMemberFromURL(queries, "id"))
+					r.Get("/teams/installations", h.ListTeamsInstallations)
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
+					r.Delete("/teams/installations/{installationId}", h.RevokeTeamsInstallation)
+					r.Get("/teams/installations/{installationId}/app-package", h.DownloadTeamsAppPackage)
+					r.Post("/teams/install", h.RegisterTeamsBot)
+				})
 			})
 		})
 
@@ -1912,6 +1990,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// workspace-scoped, identity from the session, token proves only
 		// "this Telegram user id requested binding".
 		r.Post("/api/telegram/binding/redeem", h.RedeemTelegramBindingToken)
+		// Teams binding-token redemption (fork addition), same rationale.
+		r.Post("/api/teams/binding/redeem", h.RedeemTeamsBindingToken)
 
 		// Composio integration (MUL-3720). User-scoped (no workspace context):
 		// a connection belongs to a user. These four require a logged-in

@@ -222,4 +222,9 @@ const (
 	// front-ends invalidate the Telegram installations query on either.
 	EventTelegramInstallationCreated = "telegram_installation:created"
 	EventTelegramInstallationRevoked = "telegram_installation:revoked"
+
+	// Microsoft Teams installation lifecycle (fork addition). Front-ends
+	// invalidate the Teams installations query on either.
+	EventTeamsInstallationCreated = "teams_installation:created"
+	EventTeamsInstallationRevoked = "teams_installation:revoked"
 )
