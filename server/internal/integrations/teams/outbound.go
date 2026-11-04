@@ -115,7 +115,7 @@ func (o *Outbound) handleTaskFailed(e events.Event) {
 // deliver posts text for the event's task when that task belongs to a Teams
 // conversation. recordProvenance links the posted message ids to the
 // assistant chat_message (only meaningful for the real answer).
-func (o *Outbound) deliver(ctx context.Context, e events.Event, text, kind string, recordProvenance bool) error {
+func (o *Outbound) deliver(ctx context.Context, e events.Event, text, kind string, recordProvenance bool) (err error) {
 	taskID, ok := eventTaskID(e)
 	if !ok {
 		return nil
@@ -163,7 +163,9 @@ func (o *Outbound) deliver(ctx context.Context, e events.Event, text, kind strin
 	}
 
 	defer func() {
-		if kind == "task_reply" {
+		// Files follow the reply text; if the text did not go out, sending
+		// pictures on their own would read as an answer without words.
+		if kind == "task_reply" && err == nil {
 			o.deliverAttachments(ctx, conn, target, e)
 		}
 	}()

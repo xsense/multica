@@ -189,7 +189,9 @@ func botAttachmentURL(raw string) bool {
 		return allowInsecureServiceURLForTests && err == nil && u.Scheme == "http"
 	}
 	host := strings.ToLower(u.Hostname())
-	return trustedServiceHosts[host] || strings.HasSuffix(host, ".asm.skype.com")
+	return trustedServiceHosts[host] ||
+		strings.HasSuffix(host, ".asm.skype.com") ||
+		strings.HasSuffix(host, ".asyncgw.teams.microsoft.com")
 }
 
 // sharePointDownloadURL: the pre-authenticated OneDrive/SharePoint links
