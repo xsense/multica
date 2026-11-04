@@ -127,9 +127,15 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	// Route to an installation. The recipient ("28:<app id>") is the usual
 	// key, but its shape varies by channel (Web Chat uses the bot handle), so
-	// the token's audience is tried as well. Neither is trusted here: Verify
+	// the token's audience is the fallback. Neither is trusted here: Verify
 	// below proves the token was minted for the installation's own App ID.
-	candidates := routingCandidates(act.botAppID(), unverifiedAudience(r.Header.Get("Authorization")))
+	// A GUID-shaped recipient is authoritative; the audience is consulted only
+	// when the recipient is not one (so an activity addressed to another bot
+	// is never re-routed to this one).
+	candidates := routingCandidates(act.botAppID())
+	if len(candidates) == 0 {
+		candidates = routingCandidates(unverifiedAudience(r.Header.Get("Authorization")))
+	}
 	if len(candidates) == 0 {
 		w.logger.InfoContext(ctx, "teams webhook: no bot id in request",
 			"channel_id", act.ChannelID, "recipient_id", act.Recipient.ID, "type", act.Type)
