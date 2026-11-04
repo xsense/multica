@@ -1277,8 +1277,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			teamsOutbound := teams.NewOutbound(queries, teamsTransport, slog.Default())
 			if store != nil {
 				teamsMedia = teams.NewMediaResolver(teamsTransport, store, engine.NewDBMediaIntentLedger(queries), slog.Default())
-				teamsOutbound.EnableFileDelivery(store, appURLFromEnv())
-				h.DeclareChannelFileDelivery(string(teams.TypeTeams))
+				// Non-image files reach Teams as a link to the chat, so the
+				// agent is promised delivery only when that link can be built.
+				if appURL := appURLFromEnv(); appURL != "" {
+					teamsOutbound.EnableFileDelivery(store, appURL)
+					h.DeclareChannelFileDelivery(string(teams.TypeTeams))
+				}
 			}
 			channelRouter.Register(teams.TypeTeams, teams.NewResolverSet(teams.ResolverSetConfig{
 				Queries:   queries,
@@ -1298,7 +1302,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				Queries:      queries,
 				DB:           pool,
 				Transport:    teamsTransport,
-				AcceptsMedia: store != nil,
+				AcceptsMedia: teamsMedia != nil,
 				Handle:       channelRouter.Handle,
 				Logger:       slog.Default(),
 			})

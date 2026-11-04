@@ -242,7 +242,7 @@ func (w *Webhook) handleMessage(ctx context.Context, rw http.ResponseWriter, act
 	}
 	if msg.Type == channel.MsgTypeUnknown {
 		if active {
-			w.notify(act, conn, msgUnsupportedType)
+			w.notify(act, conn, w.unsupportedNotice())
 		}
 		rw.WriteHeader(http.StatusOK)
 		return
@@ -255,11 +255,6 @@ func (w *Webhook) handleMessage(ctx context.Context, rw http.ResponseWriter, act
 			w.logger.WarnContext(ctx, "teams webhook: refresh reply route failed", "error", err)
 		}
 	}
-	if raw, _ := decodeRaw(msg); raw.UnsupportedFile && active {
-		// The message goes on with what could be read; the sender learns
-		// which part was left behind.
-		w.notify(act, conn, msgUnsupportedType)
-	}
 	if err := w.handle(hctx, msg); err != nil {
 		// Infrastructure failure: let the Connector redeliver. The engine's
 		// (installation, message_id) dedup absorbs a delivery that did land.
@@ -269,7 +264,20 @@ func (w *Webhook) handleMessage(ctx context.Context, rw http.ResponseWriter, act
 		rw.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	// Only after a successful hand-off: a 5xx is redelivered, and a notice
+	// sent before it would be posted again on every retry.
+	if raw, _ := decodeRaw(msg); raw.UnsupportedFile && active {
+		w.notify(act, conn, w.unsupportedNotice())
+	}
 	rw.WriteHeader(http.StatusOK)
+}
+
+// unsupportedNotice explains why a file was left behind.
+func (w *Webhook) unsupportedNotice() string {
+	if !w.acceptsMedia {
+		return msgFilesDisabled
+	}
+	return msgUnsupportedType
 }
 
 // handleConversationUpdate greets the user when the bot is added to a
