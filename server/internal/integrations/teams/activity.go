@@ -60,9 +60,10 @@ type Entity struct {
 
 // Attachment is a message attachment (file, card, inline image).
 type Attachment struct {
-	ContentType string `json:"contentType"`
-	ContentURL  string `json:"contentUrl"`
-	Name        string `json:"name"`
+	ContentType string          `json:"contentType"`
+	ContentURL  string          `json:"contentUrl"`
+	Name        string          `json:"name"`
+	Content     json.RawMessage `json:"content,omitempty"`
 }
 
 // teamsChannelData is the Teams-specific channelData block.
@@ -128,6 +129,11 @@ type teamsRawEvent struct {
 	ActivityID string `json:"activity_id"`
 	// EventType is a coarse label for drop audits ("message").
 	EventType string `json:"event_type"`
+	// Media lists the files ResolveMedia fetches, in placeholder order.
+	Media []inboundMedia `json:"media,omitempty"`
+	// UnsupportedFile: the message also carried a file this integration
+	// cannot fetch (a channel/group SharePoint reference); the sender is told.
+	UnsupportedFile bool `json:"unsupported_file,omitempty"`
 }
 
 // chatTypeOf maps Teams conversationType to the engine's two room shapes.
@@ -162,6 +168,13 @@ func splitChannelThread(conversationID string) (channelID, rootID string) {
 // the activity must not reach the core (not a user message, from a bot, empty
 // after cleanup, unsupported conversation type).
 func inboundFromActivity(a Activity, appID, tenantID string) (channel.InboundMessage, bool) {
+	return inboundFromActivityWithMedia(a, appID, tenantID, false)
+}
+
+// inboundFromActivityWithMedia is inboundFromActivity with media ingest:
+// acceptsMedia says the deployment can store files (object storage and a
+// media resolver are wired). Without it every file is "unsupported".
+func inboundFromActivityWithMedia(a Activity, appID, tenantID string, acceptsMedia bool) (channel.InboundMessage, bool) {
 	if a.Type != "message" {
 		return channel.InboundMessage{}, false
 	}
@@ -177,22 +190,33 @@ func inboundFromActivity(a Activity, appID, tenantID string) (channel.InboundMes
 	addressed := chatType == channel.ChatTypeP2P || mentioned
 	text := cleanText(a, appID)
 
+	media, unsupported := extractMedia(a)
+	if !acceptsMedia && len(media) > 0 {
+		media, unsupported = nil, true
+	}
+
 	msgType := channel.MsgTypeText
-	if strings.TrimSpace(text) == "" {
-		if hasFileAttachment(a) {
-			// Files need the Graph API with extra consent; v1 tells the user
-			// instead of silently ignoring them (webhook.go sends the notice).
+	if strings.TrimSpace(text) == "" && len(media) == 0 {
+		if unsupported || hasFileAttachment(a) {
+			// Nothing this integration can read; webhook.go tells the sender.
 			msgType = channel.MsgTypeUnknown
+			unsupported = true
 		} else {
 			return channel.InboundMessage{}, false
 		}
 	}
 
+	// CommandText is the sender's own words: a placeholder never makes a
+	// command, and a command is never hidden behind one.
 	commandText := text
 	forceFresh := false
 	if control, ok := engine.ParseControlCommand(text); ok {
 		text = control.Body
 		forceFresh = control.Kind == engine.ControlCommandFreshSession
+	}
+	if len(media) > 0 {
+		text = composeMediaBody(media, text)
+		msgType = mediaMsgType(media)
 	}
 
 	_, rootID := splitChannelThread(a.Conversation.ID)
@@ -202,14 +226,16 @@ func inboundFromActivity(a Activity, appID, tenantID string) (channel.InboundMes
 	}
 
 	raw, _ := json.Marshal(teamsRawEvent{
-		AppID:          appID,
-		TenantID:       tenantID,
-		ServiceURL:     a.ServiceURL,
-		ConversationID: a.Conversation.ID,
-		FromID:         a.From.ID,
-		SenderName:     a.From.Name,
-		ActivityID:     a.ID,
-		EventType:      "message",
+		AppID:           appID,
+		TenantID:        tenantID,
+		ServiceURL:      a.ServiceURL,
+		ConversationID:  a.Conversation.ID,
+		FromID:          a.From.ID,
+		SenderName:      a.From.Name,
+		ActivityID:      a.ID,
+		EventType:       "message",
+		Media:           media,
+		UnsupportedFile: unsupported,
 	})
 
 	var reply *channel.ReplyCtx

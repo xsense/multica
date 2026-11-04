@@ -10,7 +10,13 @@ const (
 		"- `/new` เริ่ม chat ใหม่ · `/clear` เริ่มรอบถัดไปแบบไม่มี context เดิม\n\n" +
 		"ในช่องทีม (channel) ให้ @mention ผมก่อนทุกครั้ง"
 
-	msgUnsupportedType = "ตอนนี้ผมอ่านได้เฉพาะข้อความตัวอักษรครับ ยังเปิดไฟล์หรือรูปจาก Teams ไม่ได้ — ลองแปะเนื้อหาเป็นข้อความ หรือแนบไฟล์ใน issue บน Multica แทน"
+	msgUnsupportedType = "ผมเปิดไฟล์นี้ไม่ได้ครับ — ไฟล์ที่แนบในช่องทีมหรือ group chat ต้องใช้สิทธิ์ SharePoint ที่ bot ไม่ได้ขอไว้ ส่งไฟล์มาในแชตส่วนตัวกับผมแทน (รูปที่ paste ลงแชตใช้ได้ทุกที่)"
+
+	msgMediaUnavailable = "⚠️ บางไฟล์โหลดเข้า Multica ไม่สำเร็จ (ใหญ่เกิน 25 MB หรือดาวน์โหลดไม่ได้) agent จะเห็นแค่ชื่อไฟล์ ลองส่งใหม่อีกครั้งครับ"
+
+	msgOutboundFilesHeader = "📎 ไฟล์แนบจาก agent:"
+	msgOutboundFilesLink   = "[เปิดในแชตบน Multica](%s)"
+	msgOutboundFilesFailed = "⚠️ ส่งไฟล์แนบบางไฟล์มาใน Teams ไม่ได้ ไฟล์ยังอยู่ในคำตอบบน Multica"
 
 	msgBindingPrompt = "👋 ก่อนเริ่มคุย ต้องผูกบัญชี Teams ของคุณกับ Multica ก่อนครับ:\n\n[ผูกบัญชี (ลิงก์หมดอายุใน 15 นาที)](%s)"
 

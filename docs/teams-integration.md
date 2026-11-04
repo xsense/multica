@@ -71,8 +71,24 @@ git tag xsense-<new tag>-teams.1 && git push origin xsense-<new tag>-teams.1
 The `xsense teams` workflow builds, vets, tests and publishes
 `ghcr.io/xsense/multica-{backend,web}:<tag>` for amd64 and arm64.
 
-## Not in v1
+## Files and pictures (v2)
 
-* Files and images sent in Teams (needs Graph consent for SharePoint/OneDrive).
+* In: pictures pasted into any chat (Connector-hosted, fetched with the bot
+  token) and files sent in a personal chat (manifest `supportsFiles: true`;
+  pre-authenticated OneDrive `downloadUrl`, fetched without credentials).
+  Both become chat attachments through the shared media pipeline (intent
+  ledger → object storage → bound to the message). ≤ 25 MB per file.
+* Files posted in channels / group chats are SharePoint references that need
+  Graph consent; the sender is told to use the personal chat.
+* Out: agent attachments that are PNG/JPEG/GIF go inline as base64 (scaled to
+  ≤ 1024 px / ≤ 1 MB when needed); other files are listed with a link to the
+  chat in Multica.
+* Requires object storage (S3 or local uploads); without it Teams is text-only.
+* Re-upload the Teams app package after upgrading (version 1.1.x adds
+  `supportsFiles`).
+
+## Not yet
+
+* Files in channels / group chats (Graph consent).
 * Streaming partial answers (Teams throttles edits and marks them "Edited").
 * Adaptive cards / message extensions.

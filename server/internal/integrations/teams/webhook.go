@@ -57,12 +57,14 @@ WHERE installation_id = $1 AND channel_type = 'teams' AND channel_chat_id = $2
 
 // Webhook serves POST /api/webhooks/teams.
 type Webhook struct {
-	q         webhookQueries
-	db        execer
-	transport *Transport
-	auth      *Authenticator
-	handle    channel.InboundHandler
-	logger    *slog.Logger
+	q  webhookQueries
+	db execer
+	// acceptsMedia: object storage + a media resolver are wired.
+	acceptsMedia bool
+	transport    *Transport
+	auth         *Authenticator
+	handle       channel.InboundHandler
+	logger       *slog.Logger
 	// spawn runs best-effort notices off the request path (tests run inline).
 	spawn func(func())
 }
@@ -73,6 +75,9 @@ type WebhookConfig struct {
 	// DB refreshes stored reply routes (normally the pgx pool). Optional.
 	DB        execer
 	Transport *Transport
+	// AcceptsMedia must match whether the ResolverSet carries a media
+	// resolver (both follow object storage being configured).
+	AcceptsMedia bool
 	// Auth defaults to the public Bot Framework metadata.
 	Auth *Authenticator
 	// Handle is the engine inbound entry point (engine.Router.Handle).
@@ -91,13 +96,14 @@ func NewWebhook(cfg WebhookConfig) *Webhook {
 		auth = NewAuthenticator("", nil)
 	}
 	return &Webhook{
-		q:         cfg.Queries,
-		db:        cfg.DB,
-		transport: cfg.Transport,
-		auth:      auth,
-		handle:    cfg.Handle,
-		logger:    logger,
-		spawn:     func(f func()) { go f() },
+		q:            cfg.Queries,
+		db:           cfg.DB,
+		acceptsMedia: cfg.AcceptsMedia,
+		transport:    cfg.Transport,
+		auth:         auth,
+		handle:       cfg.Handle,
+		logger:       logger,
+		spawn:        func(f func()) { go f() },
 	}
 }
 
@@ -222,7 +228,7 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 }
 
 func (w *Webhook) handleMessage(ctx context.Context, rw http.ResponseWriter, act Activity, appID, tenantID string, conn *connector, instID pgtype.UUID, active bool) {
-	msg, ok := inboundFromActivity(act, appID, tenantID)
+	msg, ok := inboundFromActivityWithMedia(act, appID, tenantID, w.acceptsMedia)
 	if !ok {
 		rw.WriteHeader(http.StatusOK)
 		return
@@ -248,6 +254,11 @@ func (w *Webhook) handleMessage(ctx context.Context, rw http.ResponseWriter, act
 		if _, err := w.db.Exec(hctx, refreshServiceURLSQL, instID, msg.Source.ChatID, act.ServiceURL); err != nil {
 			w.logger.WarnContext(ctx, "teams webhook: refresh reply route failed", "error", err)
 		}
+	}
+	if raw, _ := decodeRaw(msg); raw.UnsupportedFile && active {
+		// The message goes on with what could be read; the sender learns
+		// which part was left behind.
+		w.notify(act, conn, msgUnsupportedType)
 	}
 	if err := w.handle(hctx, msg); err != nil {
 		// Infrastructure failure: let the Connector redeliver. The engine's

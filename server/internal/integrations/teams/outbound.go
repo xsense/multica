@@ -38,6 +38,8 @@ type outboundQueries interface {
 	GetChannelInstallation(ctx context.Context, arg db.GetChannelInstallationParams) (db.ChannelInstallation, error)
 	SetChatMessageChannelOutboundProvenanceByTask(ctx context.Context, arg db.SetChatMessageChannelOutboundProvenanceByTaskParams) (int64, error)
 	RecordChannelOutboundMessage(ctx context.Context, arg db.RecordChannelOutboundMessageParams) error
+	ListAttachmentsByChatMessage(ctx context.Context, arg db.ListAttachmentsByChatMessageParams) ([]db.Attachment, error)
+	GetWorkspace(ctx context.Context, id pgtype.UUID) (db.Workspace, error)
 }
 
 // Outbound is the bus subscriber that posts replies.
@@ -47,6 +49,18 @@ type Outbound struct {
 	logger    *slog.Logger
 	// spawn runs a delivery off the synchronous bus (tests run inline).
 	spawn func(func())
+	// objects is set by EnableFileDelivery; nil = text replies only.
+	objects objectStore
+	// appURL is the web app origin, for "open in Multica" file links.
+	appURL string
+}
+
+// EnableFileDelivery turns on delivery of files the agent attached to its
+// reply: pictures inline, other files as a link to the chat in Multica. Call
+// at boot, before Register, only when object storage is configured.
+func (o *Outbound) EnableFileDelivery(objects objectStore, appURL string) {
+	o.objects = objects
+	o.appURL = strings.TrimRight(appURL, "/")
 }
 
 // NewOutbound builds the subscriber.
@@ -68,8 +82,8 @@ const deliveryTimeout = 60 * time.Second
 
 func (o *Outbound) handleChatDone(e events.Event) {
 	content := chatDoneContent(e.Payload)
-	if strings.TrimSpace(content) == "" {
-		return
+	if strings.TrimSpace(content) == "" && (o.objects == nil || chatDoneMessageID(e.Payload) == "") {
+		return // nothing to say and no files that could be bound
 	}
 	// Bus delivery is synchronous; never hold the publisher on a Teams call.
 	o.spawn(func() {
@@ -148,6 +162,11 @@ func (o *Outbound) deliver(ctx context.Context, e events.Event, text, kind strin
 		return errors.New("teams binding has no serviceUrl")
 	}
 
+	defer func() {
+		if kind == "task_reply" {
+			o.deliverAttachments(ctx, conn, target, e)
+		}
+	}()
 	var ids []string
 	for _, chunk := range chunkMarkdown(text, maxMessageChars) {
 		id, err := sendWithRetry(ctx, func(ctx context.Context) (string, error) {
