@@ -36,6 +36,8 @@ type ResolverSetConfig struct {
 	Transport *Transport
 	Replier   engine.OutboundReplier
 	Typing    engine.TypingNotifier
+	// Media ingests pictures and personal-chat files; nil = text only.
+	Media engine.MediaResolver
 	// AutoBindDomains enables binding a Teams user to the Multica account
 	// with the same email on first contact, for addresses on these domains
 	// only (lower-case, no "@"). Empty = off: everyone uses the bind link.
@@ -45,9 +47,9 @@ type ResolverSetConfig struct {
 	Logger          *slog.Logger
 }
 
-// NewResolverSet assembles the Teams ResolverSet. Media stays nil: Teams
-// files live in SharePoint/OneDrive behind Graph consent, which v1 does not
-// request; file messages get a notice instead (webhook.go).
+// NewResolverSet assembles the Teams ResolverSet. Media (media.go) carries
+// pasted pictures and personal-chat files into object storage; files posted
+// in channels / group chats need Graph consent and get a notice instead.
 func NewResolverSet(cfg ResolverSetConfig) engine.ResolverSet {
 	logger := cfg.Logger
 	if logger == nil {
@@ -68,6 +70,7 @@ func NewResolverSet(cfg ResolverSetConfig) engine.ResolverSet {
 			Fallback: "Teams chat",
 		})},
 		Audit:      &auditor{q: cfg.Queries},
+		Media:      cfg.Media,
 		Replier:    cfg.Replier,
 		Typing:     cfg.Typing,
 		OriginType: originType,

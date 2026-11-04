@@ -1271,25 +1271,36 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			// reply subscriber runs (bus delivery is in subscription order).
 			teamsTyping := teams.NewTypingManager(teamsTransport, slog.Default())
 			teamsTyping.Register(bus)
+			// Files both ways need object storage, decided by one condition so
+			// the inbound capability and the agent's delivery promise match.
+			var teamsMedia engine.MediaResolver
+			teamsOutbound := teams.NewOutbound(queries, teamsTransport, slog.Default())
+			if store != nil {
+				teamsMedia = teams.NewMediaResolver(teamsTransport, store, engine.NewDBMediaIntentLedger(queries), slog.Default())
+				teamsOutbound.EnableFileDelivery(store, appURLFromEnv())
+				h.DeclareChannelFileDelivery(string(teams.TypeTeams))
+			}
 			channelRouter.Register(teams.TypeTeams, teams.NewResolverSet(teams.ResolverSetConfig{
 				Queries:   queries,
 				Tx:        pool,
 				Transport: teamsTransport,
 				Replier:   teamsReplier,
 				Typing:    teamsTyping,
+				Media:     teamsMedia,
 				// Opt-in, per verified email domain (comma-separated); empty =
 				// every Teams user links with the one-time bind link.
 				AutoBindDomains: strings.Split(os.Getenv("MULTICA_TEAMS_AUTO_BIND_DOMAINS"), ","),
 				Logger:          slog.Default(),
 			}))
-			teams.NewOutbound(queries, teamsTransport, slog.Default()).Register(bus)
+			teamsOutbound.Register(bus)
 			teams.RegisterTeams(channelRegistry)
 			h.TeamsWebhook = teams.NewWebhook(teams.WebhookConfig{
-				Queries:   queries,
-				DB:        pool,
-				Transport: teamsTransport,
-				Handle:    channelRouter.Handle,
-				Logger:    slog.Default(),
+				Queries:      queries,
+				DB:           pool,
+				Transport:    teamsTransport,
+				AcceptsMedia: store != nil,
+				Handle:       channelRouter.Handle,
+				Logger:       slog.Default(),
 			})
 			publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/")
 			if publicURL == "" {
