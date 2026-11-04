@@ -41,7 +41,17 @@ const (
 	maxInlineImageSide   = 1024
 	maxOutboundReadBytes = 30 << 20 // never read a larger object into memory
 	attachmentBudget     = 3 * time.Minute
+	// maxResizeSourceBytes / maxResizePixels bound what is ever decoded to
+	// be scaled down; anything larger is linked instead.
+	maxResizeSourceBytes = 15 << 20
+	maxResizePixels      = 24 << 20
+	// maxInlineImagesPerReply caps inline posts per reply (the rest are
+	// linked) so one reply cannot trip the Connector's rate limit.
+	maxInlineImagesPerReply = 10
 )
+
+// resizeSlots bounds concurrent decode+scale work across all replies.
+var resizeSlots = make(chan struct{}, 2)
 
 // deliverAttachments sends the reply's files after its text. Best effort:
 // the files stay attached to the reply in Multica whatever happens here.
@@ -72,11 +82,13 @@ func (o *Outbound) deliverAttachments(parent context.Context, conn *connector, t
 
 	var linked []db.Attachment
 	failed := false
+	inlined := 0
 	for _, row := range rows {
-		if !isInlineImageType(row.ContentType) {
+		if !isInlineImageType(row.ContentType) || inlined >= maxInlineImagesPerReply {
 			linked = append(linked, row)
 			continue
 		}
+		inlined++
 		if err := o.sendInlineImage(ctx, conn, target, row); err != nil {
 			o.logger.WarnContext(ctx, "teams outbound: inline image not sent; linking it instead",
 				"attachment_id", util.UUIDToString(row.ID), "error", err)
@@ -93,7 +105,7 @@ func (o *Outbound) deliverAttachments(parent context.Context, conn *connector, t
 		}
 	}
 	if failed {
-		_, _ = conn.SendMessage(ctx, target.ServiceURL, target.ConversationID, msgOutboundFilesFailed, "")
+		o.logger.WarnContext(ctx, "teams outbound: attachments stay in Multica only", "chat_session_id", e.ChatSessionID)
 	}
 }
 
@@ -210,9 +222,11 @@ func fitInlineImage(data []byte, declared string) ([]byte, string, error) {
 	if format == "gif" {
 		return nil, "", errors.New("gif is over the inline limits")
 	}
-	if cfg.Width*cfg.Height > 64<<20 {
-		return nil, "", errors.New("image dimensions are too large to process")
+	if len(data) > maxResizeSourceBytes || cfg.Width*cfg.Height > maxResizePixels {
+		return nil, "", errors.New("image is too large to scale down")
 	}
+	resizeSlots <- struct{}{}
+	defer func() { <-resizeSlots }()
 	img, _, err := image.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil, "", fmt.Errorf("decode image: %w", err)
@@ -224,9 +238,10 @@ func fitInlineImage(data []byte, declared string) ([]byte, string, error) {
 			return buf.Bytes(), "image/png", nil
 		}
 	}
+	flat := flattenOnWhite(scaled)
 	for _, q := range []int{85, 70, 55} {
 		var buf bytes.Buffer
-		if err := jpeg.Encode(&buf, flattenOnWhite(scaled), &jpeg.Options{Quality: q}); err != nil {
+		if err := jpeg.Encode(&buf, flat, &jpeg.Options{Quality: q}); err != nil {
 			return nil, "", fmt.Errorf("encode jpeg: %w", err)
 		}
 		if buf.Len() <= maxInlineImageBytes {
@@ -251,6 +266,15 @@ func scaleToFit(img image.Image, side int) image.Image {
 	} else {
 		nw = max(1, w*side/h)
 	}
+	// RGBA64At (implemented by every stdlib image type) reads a pixel
+	// without allocating, unlike At.
+	px := func(x, y int) (uint32, uint32, uint32, uint32) {
+		if fast, ok := img.(image.RGBA64Image); ok {
+			c := fast.RGBA64At(x, y)
+			return uint32(c.R), uint32(c.G), uint32(c.B), uint32(c.A)
+		}
+		return img.At(x, y).RGBA()
+	}
 	dst := image.NewRGBA(image.Rect(0, 0, nw, nh))
 	for y := 0; y < nh; y++ {
 		sy0 := b.Min.Y + y*h/nh
@@ -261,7 +285,7 @@ func scaleToFit(img image.Image, side int) image.Image {
 			var r, g, bl, a, n uint64
 			for sy := sy0; sy < sy1; sy++ {
 				for sx := sx0; sx < sx1; sx++ {
-					cr, cg, cb, ca := img.At(sx, sy).RGBA()
+					cr, cg, cb, ca := px(sx, sy)
 					r, g, bl, a = r+uint64(cr), g+uint64(cg), bl+uint64(cb), a+uint64(ca)
 					n++
 				}

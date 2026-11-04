@@ -16,7 +16,7 @@ const (
 
 	msgOutboundFilesHeader = "📎 ไฟล์แนบจาก agent:"
 	msgOutboundFilesLink   = "[เปิดในแชตบน Multica](%s)"
-	msgOutboundFilesFailed = "⚠️ ส่งไฟล์แนบบางไฟล์มาใน Teams ไม่ได้ ไฟล์ยังอยู่ในคำตอบบน Multica"
+	msgFilesDisabled       = "ระบบ Multica นี้ยังไม่ได้เปิดที่เก็บไฟล์ เลยรับรูปหรือไฟล์จาก Teams ไม่ได้ครับ ส่งเนื้อหาเป็นข้อความแทนได้"
 
 	msgBindingPrompt = "👋 ก่อนเริ่มคุย ต้องผูกบัญชี Teams ของคุณกับ Multica ก่อนครับ:\n\n[ผูกบัญชี (ลิงก์หมดอายุใน 15 นาที)](%s)"
 
