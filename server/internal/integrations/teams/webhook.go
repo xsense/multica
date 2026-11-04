@@ -2,11 +2,13 @@ package teams
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -122,24 +124,43 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	appID := act.botAppID()
-	if appID == "" {
+	ctx := r.Context()
+	// Route to an installation. The recipient ("28:<app id>") is the usual
+	// key, but its shape varies by channel (Web Chat uses the bot handle), so
+	// the token's audience is tried as well. Neither is trusted here: Verify
+	// below proves the token was minted for the installation's own App ID.
+	candidates := routingCandidates(act.botAppID(), unverifiedAudience(r.Header.Get("Authorization")))
+	if len(candidates) == 0 {
+		w.logger.InfoContext(ctx, "teams webhook: no bot id in request",
+			"channel_id", act.ChannelID, "recipient_id", act.Recipient.ID, "type", act.Type)
 		rw.WriteHeader(http.StatusUnauthorized)
 		return
 	}
-	ctx := r.Context()
-	inst, err := w.q.GetChannelInstallationByAppID(ctx, db.GetChannelInstallationByAppIDParams{
-		ChannelType: string(TypeTeams),
-		AppID:       appID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			// Unknown bot: indistinguishable from a forged request.
-			rw.WriteHeader(http.StatusUnauthorized)
+	var (
+		inst  db.ChannelInstallation
+		appID string
+		found bool
+	)
+	for _, id := range candidates {
+		row, err := w.q.GetChannelInstallationByAppID(ctx, db.GetChannelInstallationByAppIDParams{
+			ChannelType: string(TypeTeams),
+			AppID:       id,
+		})
+		if err == nil {
+			inst, appID, found = row, id, true
+			break
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			w.logger.ErrorContext(ctx, "teams webhook: installation lookup failed", "error", err)
+			rw.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
-		w.logger.ErrorContext(ctx, "teams webhook: installation lookup failed", "error", err)
-		rw.WriteHeader(http.StatusServiceUnavailable)
+	}
+	if !found {
+		// Unknown bot: indistinguishable from a forged request.
+		w.logger.InfoContext(ctx, "teams webhook: no Teams installation for this bot",
+			"candidates", candidates, "channel_id", act.ChannelID, "recipient_id", act.Recipient.ID)
+		rw.WriteHeader(http.StatusUnauthorized)
 		return
 	}
 	conn, creds, err := w.transport.connectorFor(inst.Config)
@@ -156,6 +177,8 @@ func (w *Webhook) ServeHTTP(rw http.ResponseWriter, r *http.Request) {
 	}
 	if act.ChannelID != "msteams" {
 		// Web Chat, Emulator and other Bot Framework channels are not served.
+		w.logger.InfoContext(ctx, "teams webhook: verified activity from a non-Teams channel ignored",
+			"app_id", appID, "channel_id", act.ChannelID)
 		rw.WriteHeader(http.StatusOK)
 		return
 	}
@@ -259,4 +282,51 @@ func (w *Webhook) notify(act Activity, conn *connector, text string) {
 			w.logger.Warn("teams webhook: notice failed", "error", err)
 		}
 	})
+}
+
+// routingCandidates returns the distinct, GUID-shaped App ID candidates.
+func routingCandidates(ids ...string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range ids {
+		norm, ok := normalizeGUID(id)
+		if ok && !seen[norm] {
+			seen[norm] = true
+			out = append(out, norm)
+		}
+	}
+	return out
+}
+
+// unverifiedAudience reads the aud claim of a bearer JWT WITHOUT checking
+// it. Used only to pick which installation's App ID to verify the token
+// against; Verify then enforces aud == that App ID with a valid signature.
+func unverifiedAudience(authHeader string) string {
+	scheme, raw, ok := strings.Cut(strings.TrimSpace(authHeader), " ")
+	if !ok || !strings.EqualFold(scheme, "Bearer") {
+		return ""
+	}
+	parts := strings.Split(strings.TrimSpace(raw), ".")
+	if len(parts) != 3 || len(parts[1]) > 8192 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Aud json.RawMessage `json:"aud"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || len(claims.Aud) == 0 {
+		return ""
+	}
+	var one string
+	if json.Unmarshal(claims.Aud, &one) == nil {
+		return one
+	}
+	var many []string
+	if json.Unmarshal(claims.Aud, &many) == nil && len(many) > 0 {
+		return many[0]
+	}
+	return ""
 }

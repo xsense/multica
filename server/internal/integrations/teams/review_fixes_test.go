@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 
@@ -230,5 +231,39 @@ func TestConnectorFallsBackToLegacyAuthorityOn401(t *testing.T) {
 	}
 	if legacyMints.Load() != 1 {
 		t.Fatalf("legacy token minted %d times, want 1 (cached after fallback)", legacyMints.Load())
+	}
+}
+
+// ---- routing: a recipient that is not "28:<app id>" still routes by the
+// token audience, and is still fully verified ----
+
+func TestWebhookRoutesByTokenAudience(t *testing.T) {
+	f := newFakeBotFramework(t)
+	var handled []channel.InboundMessage
+	w := newTestWebhook(f, &handled)
+	a := baseActivity(f.server.URL)
+	a.Recipient.ID = "multica-xsense" // bot handle, as Web Chat sends it
+	if code := post(t, w, a, f.token(t, nil)); code != http.StatusOK {
+		t.Fatalf("status = %d", code)
+	}
+	if len(handled) != 1 {
+		t.Fatalf("handled = %d, want 1", len(handled))
+	}
+	// A token for another app id must not route anywhere.
+	other := f.token(t, func(c jwt.MapClaims) { c["aud"] = "99999999-2222-3333-4444-555555555555" })
+	if code := post(t, w, a, other); code != http.StatusUnauthorized {
+		t.Fatalf("foreign audience: status = %d", code)
+	}
+}
+
+func TestUnverifiedAudience(t *testing.T) {
+	f := newFakeBotFramework(t)
+	if got := unverifiedAudience("Bearer " + f.token(t, nil)); got != testAppID {
+		t.Fatalf("aud = %q", got)
+	}
+	for _, bad := range []string{"", "Bearer", "Bearer a.b", "Basic x.y.z", "Bearer x.!!!.z"} {
+		if got := unverifiedAudience(bad); got != "" {
+			t.Fatalf("%q -> %q", bad, got)
+		}
 	}
 }
