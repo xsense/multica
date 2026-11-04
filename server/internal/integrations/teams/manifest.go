@@ -133,8 +133,10 @@ func BuildAppPackage(p ManifestParams) ([]byte, error) {
 		Icons:       manifestIcons{Color: "color.png", Outline: "outline.png"},
 		AccentColor: accentColor,
 		Bots: []manifestBot{{
-			BotID:  appID,
-			Scopes: []string{"personal", "team", "groupChat"},
+			BotID: appID,
+			// Personal-chat file send (OneDrive download links); see media.go.
+			SupportsFiles: true,
+			Scopes:        []string{"personal", "team", "groupChat"},
 			CommandLists: []manifestCommandList{{
 				Scopes: []string{"personal", "team", "groupChat"},
 				Commands: []manifestCommand{

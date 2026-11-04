@@ -245,6 +245,14 @@ type outActivity struct {
 	ReplyToID    string            `json:"replyToId,omitempty"`
 	Conversation *conversationRef  `json:"conversation,omitempty"`
 	Entities     []json.RawMessage `json:"entities,omitempty"`
+	Attachments  []outAttachment   `json:"attachments,omitempty"`
+}
+
+// outAttachment is a message attachment the bot sends (an inline picture).
+type outAttachment struct {
+	ContentType string `json:"contentType"`
+	ContentURL  string `json:"contentUrl"`
+	Name        string `json:"name,omitempty"`
 }
 
 type conversationRef struct {
@@ -266,6 +274,20 @@ func (c *connector) SendMessage(ctx context.Context, serviceURL, conversationID,
 		act.ReplyToID = replyToID
 		path += "/" + url.PathEscape(replyToID)
 	}
+	var rr resourceResponse
+	if err := c.do(ctx, http.MethodPost, serviceURL, path, act, &rr); err != nil {
+		return "", err
+	}
+	return rr.ID, nil
+}
+
+// SendAttachments posts a message carrying attachments (text may be empty).
+func (c *connector) SendAttachments(ctx context.Context, serviceURL, conversationID, text string, atts []outAttachment) (string, error) {
+	act := outActivity{Type: "message", Text: text, Attachments: atts}
+	if text != "" {
+		act.TextFormat = "markdown"
+	}
+	path := "/v3/conversations/" + url.PathEscape(conversationID) + "/activities"
 	var rr resourceResponse
 	if err := c.do(ctx, http.MethodPost, serviceURL, path, act, &rr); err != nil {
 		return "", err

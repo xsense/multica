@@ -245,9 +245,10 @@ func (h *Handler) DownloadTeamsAppPackage(w http.ResponseWriter, r *http.Request
 		BotName:   info.BotName,
 		AgentName: agentName,
 		AppURL:    h.TeamsAppURL,
-		// Bump on every regeneration so Teams accepts a re-upload as an
-		// update: minutes since the install row last changed.
-		Version: "1.0." + itoa(row.UpdatedAt.Time.Unix()/60%1_000_000),
+		// Teams accepts a re-upload only with a higher version. The minor
+		// tracks manifest changes (1 = supportsFiles); the patch is minutes
+		// since the install row last changed.
+		Version: "1.1." + itoa(row.UpdatedAt.Time.Unix()/60%1_000_000),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "could not build the Teams app package (is MULTICA_APP_URL an https URL?)")
