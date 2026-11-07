@@ -281,6 +281,41 @@ func (c *connector) SendMessage(ctx context.Context, serviceURL, conversationID,
 	return rr.ID, nil
 }
 
+// createConversationRequest is the ConversationParameters subset needed to
+// open (or reopen) the bot's personal chat with one user.
+type createConversationRequest struct {
+	Bot         channelAccountRef   `json:"bot"`
+	Members     []channelAccountRef `json:"members"`
+	IsGroup     bool                `json:"isGroup"`
+	TenantID    string              `json:"tenantId"`
+	ChannelData map[string]any      `json:"channelData"`
+}
+
+type channelAccountRef struct {
+	ID string `json:"id"`
+}
+
+// CreatePersonalConversation returns the id of the bot's 1:1 chat with
+// userID, creating it when needed. Teams answers with the existing
+// conversation for a user who already chats with the bot, so the call is
+// idempotent and is how proactive messages find a user's personal chat.
+func (c *connector) CreatePersonalConversation(ctx context.Context, serviceURL, userID string) (string, error) {
+	req := createConversationRequest{
+		Bot:         channelAccountRef{ID: botIDPrefix + c.creds.AppID},
+		Members:     []channelAccountRef{{ID: userID}},
+		TenantID:    c.creds.TenantID,
+		ChannelData: map[string]any{"tenant": map[string]string{"id": c.creds.TenantID}},
+	}
+	var rr resourceResponse
+	if err := c.do(ctx, http.MethodPost, serviceURL, "/v3/conversations", req, &rr); err != nil {
+		return "", err
+	}
+	if rr.ID == "" {
+		return "", errors.New("teams connector: create conversation returned no id")
+	}
+	return rr.ID, nil
+}
+
 // SendAttachments posts a message carrying attachments (text may be empty).
 func (c *connector) SendAttachments(ctx context.Context, serviceURL, conversationID, text string, atts []outAttachment) (string, error) {
 	act := outActivity{Type: "message", Text: text, Attachments: atts}
