@@ -1297,6 +1297,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				Logger:          slog.Default(),
 			}))
 			teamsOutbound.Register(bus)
+			// Agent comments and in_review/done/blocked status changes reach the
+			// member's personal chat with the bot. MULTICA_TEAMS_INBOX_PUSH=off
+			// keeps them in the Multica inbox only.
+			switch strings.ToLower(strings.TrimSpace(os.Getenv("MULTICA_TEAMS_INBOX_PUSH"))) {
+			case "off", "false", "0":
+			default:
+				teams.NewInboxPush(queries, teamsTransport, appURLFromEnv(), slog.Default()).Register(bus)
+			}
 			teams.RegisterTeams(channelRegistry)
 			h.TeamsWebhook = teams.NewWebhook(teams.WebhookConfig{
 				Queries:      queries,
