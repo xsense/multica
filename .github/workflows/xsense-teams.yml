@@ -1,7 +1,9 @@
 # Fork-only workflow (xsense/multica): verifies the Microsoft Teams adapter and
 # publishes the backend + web images that multica-eks deploys.
 #
-#   push to teams-integration / xsense/**  → verify (build, vet, tests)
+#   push to xsense/**                      → verify (build, vet, tests)
+#   push to teams-integration (merge)      → verify + publish images tagged sha-<short>
+#                                            + open a PR in xsense/multica-eks bumping the tag
 #   tag xsense-v*  (e.g. xsense-v0.7.1-teams.1) → verify + publish images
 #     ghcr.io/xsense/multica-backend:<tag>
 #     ghcr.io/xsense/multica-web:<tag>
@@ -72,7 +74,10 @@ jobs:
 
   images:
     needs: [backend, frontend]
-    if: startsWith(github.ref, 'refs/tags/xsense-v') || (github.event_name == 'workflow_dispatch' && inputs.publish)
+    if: >-
+      startsWith(github.ref, 'refs/tags/xsense-v') ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/teams-integration') ||
+      (github.event_name == 'workflow_dispatch' && inputs.publish)
     strategy:
       fail-fast: true
       matrix:
@@ -150,3 +155,40 @@ jobs:
               $(printf "ghcr.io/$owner/$image@sha256:%s " *)
             docker buildx imagetools inspect "ghcr.io/$owner/$image:$tag"
           done
+
+  # Opens a PR in xsense/multica-eks that pins the new images (server MULTICA_TAG and
+  # the runtime's CLI build ref). Runs only for teams-integration pushes and only
+  # when the MULTICA_EKS_TOKEN secret exists (fine-grained PAT on xsense/multica-eks:
+  # Contents + Pull requests read/write). Merging that PR deploys.
+  bump-eks:
+    needs: manifests
+    if: github.event_name == 'push' && github.ref == 'refs/heads/teams-integration'
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.MULTICA_EKS_TOKEN }}
+    steps:
+      - name: open bump PR
+        run: |
+          if [ -z "$GH_TOKEN" ]; then
+            echo "::notice::MULTICA_EKS_TOKEN not set; bump multica-eks MULTICA_TAG to sha-${GITHUB_SHA::7} by hand."
+            exit 0
+          fi
+          short="${GITHUB_SHA::7}"
+          branch="bump/multica-sha-${short}"
+          git clone -q "https://x-access-token:${GH_TOKEN}@github.com/xsense/multica-eks.git" eks
+          cd eks
+          git checkout -q -b "$branch"
+          sed -i -E "s/^(  MULTICA_TAG: )sha-[0-9a-f]+/\1sha-${short}/" .github/workflows/deploy.yml
+          if [ -f runtime/Dockerfile ]; then
+            sed -i -E "s/^(ARG MULTICA_REF=)[0-9a-f]+/\1${short}/; s/\(sha-[0-9a-f]+ → [0-9a-f]+\)/(sha-${short} → ${short})/" runtime/Dockerfile
+          fi
+          if git diff --quiet; then echo "already on sha-${short}"; exit 0; fi
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -qam "Bump Multica fork image to sha-${short}"
+          git push -q origin "$branch"
+          gh pr create -R xsense/multica-eks --head "$branch" --base main \
+            --title "Bump Multica fork image to sha-${short}" \
+            --body "Images \`ghcr.io/xsense/multica-{backend,web}:sha-${short}\` published from xsense/multica@${GITHUB_SHA}.
+
+          Merging deploys the server and rebuilds the agent runtime CLI from the same commit."
+
