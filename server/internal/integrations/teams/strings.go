@@ -39,3 +39,16 @@ const (
 	msgIssueDupFmt       = "⚠️ ไม่ได้สร้างใหม่ — มี issue %s ที่ยังเปิดอยู่แล้ว"
 	msgIssueDupTitle     = "⚠️ ไม่ได้สร้างใหม่ — มี issue %s ที่ยังเปิดอยู่แล้ว: %s"
 )
+
+// Inbox push (inbox_push.go): headline before the issue title.
+const (
+	msgInboxComment   = "agent ตอบใน issue"
+	msgInboxMentioned = "agent กล่าวถึงคุณใน issue"
+	msgInboxOpen      = "เปิดใน Multica"
+)
+
+var msgInboxStatus = map[string]string{
+	"in_review": "รอตรวจ (in review)",
+	"done":      "เสร็จแล้ว (done)",
+	"blocked":   "ติดปัญหา (blocked)",
+}
