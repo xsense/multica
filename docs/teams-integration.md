@@ -92,3 +92,23 @@ The `xsense teams` workflow builds, vets, tests and publishes
 * Files in channels / group chats (Graph consent).
 * Streaming partial answers (Teams throttles edits and marks them "Edited").
 * Adaptive cards / message extensions.
+
+## Inbox push (v3)
+
+Work that finishes on an issue (scheduled wakeup, autopilot, assignment) has
+no chat session, so `teams.Outbound` cannot answer it. `teams.InboxPush`
+subscribes to `inbox:new` instead and sends the item to the recipient's
+personal chat with the bot — the shape the WeCom adapter uses upstream.
+
+* Pushed: `new_comment` / `mentioned` written by an agent, and
+  `status_changed` into `in_review`, `done` or `blocked`. Everything else stays
+  in the Multica inbox. Notification mutes still apply (no inbox item is
+  created for a muted type).
+* Bot choice: the acting agent's bot when the member is bound to it, otherwise
+  the member's most recently bound Teams bot.
+* Route: the Connector `serviceUrl` and the user's `29:` id are stored on
+  `channel_user_binding.config` (`service_url`, `teams_id`) whenever a bound
+  user messages the bot. Users bound before this change get a route on their
+  next message; until then nothing is pushed to them. The personal chat is
+  opened with `POST /v3/conversations`, which returns the existing 1:1 chat.
+* `MULTICA_TEAMS_INBOX_PUSH=off` disables it. No migration.

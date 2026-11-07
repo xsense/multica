@@ -200,7 +200,11 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 	})
 	switch {
 	case err == nil:
-		return r.requireMember(ctx, inst, binding.MulticaUserID)
+		id, err := r.requireMember(ctx, inst, binding.MulticaUserID)
+		if err == nil {
+			r.rememberRoute(ctx, binding, msg)
+		}
+		return id, err
 	case !errors.Is(err, pgx.ErrNoRows):
 		return engine.ResolvedIdentity{}, err
 	}
@@ -213,6 +217,47 @@ func (r *identityResolver) ResolveSender(ctx context.Context, inst engine.Resolv
 		return engine.ResolvedIdentity{}, engine.ErrSenderUnbound
 	}
 	return r.requireMember(ctx, inst, userID)
+}
+
+// userRoute is what the bot needs to message a bound user unprompted (inbox
+// push): the Connector endpoint of their tenant and their "29:…" id. Both
+// are kept on channel_user_binding.config next to the bind metadata.
+type userRoute struct {
+	ServiceURL string `json:"service_url"`
+	TeamsID    string `json:"teams_id"`
+}
+
+func routeFromMessage(msg channel.InboundMessage) userRoute {
+	raw, _ := decodeRaw(msg)
+	return userRoute{ServiceURL: raw.ServiceURL, TeamsID: raw.FromID}
+}
+
+func routeFromBinding(config []byte) userRoute {
+	var r userRoute
+	_ = json.Unmarshal(config, &r)
+	return r
+}
+
+// rememberRoute records the user's route on their binding when it is new or
+// has changed. Users bound through the web bind link have no route until
+// their next message; this is where they get one. Best-effort: a failed write
+// only delays inbox push for this user.
+func (r *identityResolver) rememberRoute(ctx context.Context, binding db.ChannelUserBinding, msg channel.InboundMessage) {
+	route := routeFromMessage(msg)
+	if route.ServiceURL == "" || route.TeamsID == "" || route == routeFromBinding(binding.Config) {
+		return
+	}
+	cfg, _ := json.Marshal(route)
+	if _, err := r.q.CreateChannelUserBinding(ctx, db.CreateChannelUserBindingParams{
+		WorkspaceID:    binding.WorkspaceID,
+		MulticaUserID:  binding.MulticaUserID,
+		InstallationID: binding.InstallationID,
+		ChannelType:    binding.ChannelType,
+		ChannelUserID:  binding.ChannelUserID,
+		Config:         cfg,
+	}); err != nil {
+		r.logger.WarnContext(ctx, "teams identity: record user route failed", "error", err)
+	}
 }
 
 func (r *identityResolver) requireMember(ctx context.Context, inst engine.ResolvedInstallation, userID pgtype.UUID) (engine.ResolvedIdentity, error) {
@@ -292,7 +337,13 @@ func (r *identityResolver) bindByEmail(ctx context.Context, inst engine.Resolved
 		// and the person can ask an admin for an invite.
 		return pgtype.UUID{}, false
 	}
-	cfg, _ := json.Marshal(map[string]string{"bound_by": "email", "email": email})
+	route := routeFromMessage(msg)
+	cfg, _ := json.Marshal(map[string]string{
+		"bound_by":    "email",
+		"email":       email,
+		"service_url": route.ServiceURL,
+		"teams_id":    route.TeamsID,
+	})
 	if _, err := r.q.CreateChannelUserBinding(ctx, db.CreateChannelUserBindingParams{
 		WorkspaceID:    inst.WorkspaceID,
 		MulticaUserID:  user.ID,
