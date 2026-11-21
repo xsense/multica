@@ -45,18 +45,20 @@ Backend
 Frontend
 * `packages/core/api/client.ts`, `api/schemas.ts`, `types/index.ts`,
   `package.json` (exports), `realtime/use-realtime-sync.ts`
-* `packages/views/settings/components/channels-tab.tsx`,
-  `integration-channel-icon.tsx`, `settings-navigation.ts`
-* `packages/views/agents/components/tabs/integrations-tab.tsx` (+ test)
-* `packages/views/agents/components/agent-overview-pane.tsx` (+ test) — shows the Integrations tab when only Teams is configured
-* `packages/views/settings/components/channels-tab.test.tsx`
+* `packages/views/settings/components/` (since v0.9.0 every channel goes through
+  one shared flow): `use-messaging-channels.ts` (query, connection, chat link),
+  `channel-connect-dialog.tsx` (Teams step), `channel-disconnect-dialog.tsx`,
+  `integration-channel-icon.tsx`, `settings-navigation.ts`,
+  `messaging-channels.test.tsx` (Teams in mocks and the connect/disconnect cases)
+* `packages/views/agents/components/agent-channels-section.tsx` — bot name and
+  "Download Teams app" in the row menu
 * `packages/views/locales/*/{settings,common}.json` (`teams`, `teams_bind`)
 * `packages/views/package.json` (exports)
 
 Everything else is new files: `server/internal/integrations/teams/`,
 `server/internal/handler/teams.go`, `packages/core/teams/`,
 `packages/core/types/teams.ts`, `packages/views/teams/`,
-`packages/views/settings/components/teams-{tab,mark}.tsx`,
+`packages/views/settings/components/teams-{channel-authorization,mark}.tsx`,
 `apps/web/app/teams/bind/page.tsx`, `.github/workflows/xsense-teams.yml`.
 
 ## Release
